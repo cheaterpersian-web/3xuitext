@@ -537,6 +537,7 @@ def run() -> None:
             WAIT_INBOUND_SELECT: [CallbackQueryHandler(on_inbound_selected, pattern='^inb:')],
             WAIT_VOLUME_GB: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_volume)],
             WAIT_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_days)],
+            WAIT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_username)],
         },
         fallbacks=[],
         allow_reentry=True,
