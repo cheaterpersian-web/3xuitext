@@ -90,21 +90,17 @@ class ThreeXUIClient:
         )
 
     async def list_inbounds(self) -> List[Dict[str, Any]]:
-        # Probe once to find correct prefix and pluralization if unknown
-        if self._api_prefix is None or self._use_plural_inbounds is None:
-            return await self._probe_inbounds_endpoint()
-
-        path = '/inbounds/list' if self._use_plural_inbounds else '/inbound/list'
-        url = f"{self._api_prefix}{path}"
-        resp = await self._request('GET', url)
+        # Try documented path first
+        resp = await self._request('GET', self._build_url('/panel/api/inbounds/list'))
         if resp.status_code >= 400:
-            raise ThreeXUIError(f'Failed to list inbounds: {resp.status_code} {resp.text[:200]}')
+            # Fallback to probing across flavors
+            return await self._probe_inbounds_endpoint()
         try:
             data = resp.json()
         except Exception:
             snippet = (resp.text or '')[:200]
             raise ThreeXUIError(
-                f'Unexpected non-JSON from {url}. Check PANEL_BASE_URL (scheme/path) and credentials. '
+                f'Unexpected non-JSON from /panel/api/inbounds/list. Check PANEL_BASE_URL (scheme/path) and credentials. '
                 f'Response snippet: {snippet}'
             )
         # Some panels return {"obj": [ ... ]} or plain list
@@ -180,9 +176,20 @@ class ThreeXUIClient:
                     errors.append(f"{url} -> {resp.status_code}")
                     continue
                 try:
-                    return resp.json()
+                    data = resp.json()
                 except Exception:
-                    return {'raw': resp.text}
+                    # Not JSON, treat as failure and continue
+                    errors.append(f"{url} -> not-json")
+                    continue
+                # Some APIs return { success, obj, msg }
+                if isinstance(data, dict) and 'success' in data:
+                    if data.get('success'):
+                        return data
+                    else:
+                        errors.append(f"{url} -> success=false {str(data.get('msg') or data.get('message') or '')[:80]}")
+                        continue
+                # If no explicit success flag, assume success if HTTP 200
+                return data
         raise ThreeXUIError('Failed to add client via known endpoints. Tried: ' + ', '.join(errors))
 
     async def get_client_traffics(self, *, email: Optional[str] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
@@ -191,12 +198,15 @@ class ThreeXUIClient:
             params['email'] = email
         if client_id:
             params['id'] = client_id
-        resp = await self._request('GET', self._build_url('/client/traffics'), params=params)
-        if resp.status_code >= 400 or not (resp.headers.get('content-type','').startswith('application/json')):
-            # Fallback to inbounds/getClientTraffics/<email>
-            if email:
-                alt_url = self._build_url(f'/inbounds/getClientTraffics/{email}')
-                resp = await self._request('GET', alt_url)
+        # Try documented path first
+        if email:
+            resp = await self._request('GET', self._build_url(f'/panel/api/inbounds/getClientTraffics/{email}'))
+        else:
+            resp = await self._request('GET', self._build_url('/client/traffics'), params=params)
+            if resp.status_code >= 400:
+                if email:
+                    alt_url = self._build_url(f'/inbounds/getClientTraffics/{email}')
+                    resp = await self._request('GET', alt_url)
         try:
             data = resp.json()
         except Exception:
