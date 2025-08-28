@@ -3,6 +3,9 @@ from typing import List
 import re
 import random
 import string
+import os
+import uuid as _uuid
+import urllib.parse as _up
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
