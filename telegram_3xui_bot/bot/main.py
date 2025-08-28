@@ -452,9 +452,9 @@ def _clean_username(text: str) -> str:
 
 
 def _generate_username(prefix: str, seed: int | None = None) -> str:
-    rng = random.Random(seed or 0)
-    suffix = ''.join(rng.choices(string.ascii_lowercase + string.digits, k=8))
-    return f"{prefix}{suffix}"
+    base = _uuid.uuid4().hex[:8]
+    rnd3 = random.randint(100, 999)
+    return f"{prefix}{base}-{rnd3}"
 
 
 def _build_vless_from_inbound(appcfg, inbound: dict, uid: str, remark: str) -> str | None:
