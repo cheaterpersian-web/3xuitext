@@ -2,6 +2,8 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import httpx
+import json
+import time as _time
 
 class ThreeXUIError(Exception):
     pass
@@ -113,22 +115,45 @@ class ThreeXUIClient:
         return data.get('data') or []
 
     async def add_client(self, *, inbound_id: int, username: str, total_gb: float, expiry_days: int) -> Dict[str, Any]:
-        # Map to bytes and expiry timestamp if needed
+        # Try multiple endpoint/payload variants across panel flavors
         total_bytes = int(total_gb * 1024 * 1024 * 1024)
-        payload = {
-            'inboundId': inbound_id,
-            'email': username,
-            'totalGB': total_bytes,
-            'expiryTime': expiry_days,
-            'enable': True,
-        }
-        resp = await self._request('POST', self._build_url('/client/add'), json=payload)
-        if resp.status_code >= 400:
-            raise ThreeXUIError(f'Failed to add client: {resp.status_code} {resp.text}')
-        try:
-            return resp.json()
-        except Exception:
-            return {'raw': resp.text}
+        expiry_ts_ms = int((_time.time() + expiry_days * 86400) * 1000)
+        payloads = [
+            {
+                'inboundId': inbound_id,
+                'email': username,
+                'totalGB': int(round(total_gb)),
+                'expiryTime': int(expiry_days),
+                'enable': True,
+                'limitIp': 0,
+            },
+            {
+                'inboundId': inbound_id,
+                'email': username,
+                'total': total_bytes,
+                'expireTime': expiry_ts_ms,
+                'enable': True,
+                'limitIp': 0,
+            },
+        ]
+        paths = [
+            '/client/add',
+            '/inbound/addClient',
+            '/inbounds/addClient',
+        ]
+        errors: List[str] = []
+        for path in paths:
+            url = self._build_url(path)
+            for pl in payloads:
+                resp = await self._request('POST', url, json=pl)
+                if resp.status_code >= 400:
+                    errors.append(f"{url} -> {resp.status_code}")
+                    continue
+                try:
+                    return resp.json()
+                except Exception:
+                    return {'raw': resp.text}
+        raise ThreeXUIError('Failed to add client via known endpoints. Tried: ' + ', '.join(errors))
 
     async def get_client_traffics(self, *, email: Optional[str] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
         params: Dict[str, Any] = {}
@@ -193,10 +218,25 @@ class ThreeXUIClient:
         return resp.json()
 
     async def get_inbound(self, *, inbound_id: int) -> Dict[str, Any]:
-        resp = await self._request('GET', self._build_url(f'/inbound/{inbound_id}'))
-        if resp.status_code >= 400:
-            raise ThreeXUIError(f'Failed to get inbound: {resp.status_code} {resp.text}')
-        return resp.json()
+        # Try multiple forms
+        candidates = [
+            self._build_url(f'/inbound/{inbound_id}'),
+            self._build_url(f'/inbounds/{inbound_id}'),
+            self._build_url(f'/inbounds/get/{inbound_id}'),
+        ]
+        last_resp: Optional[httpx.Response] = None
+        for url in candidates:
+            resp = await self._request('GET', url)
+            last_resp = resp
+            if resp.status_code >= 400:
+                continue
+            try:
+                return resp.json()
+            except Exception:
+                continue
+        if last_resp is None:
+            raise ThreeXUIError('Failed to get inbound: no response')
+        raise ThreeXUIError(f'Failed to get inbound: {last_resp.status_code} {last_resp.text[:200]}')
 
     async def reset_inbounds_traffic(self) -> Dict[str, Any]:
         resp = await self._request('POST', self._build_url('/reset-inbounds-traffic'))

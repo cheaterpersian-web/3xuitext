@@ -179,14 +179,6 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text(f'Failed to create client: {e}')
         return ConversationHandler.END
 
-    sub_url = ''
-    if isinstance(resp, dict):
-        sub_url = resp.get('subscription') or resp.get('url') or ''
-    if not sub_url:
-        base = getattr(app, 'subscription_base_url', '')
-        if base:
-            sub_url = f"{base.rstrip('/')}/{username}"
-
     client_id = (
         str(resp.get('id') or resp.get('clientId') or '') if isinstance(resp, dict) else ''
     )
@@ -201,9 +193,23 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         str(resp),
     )
 
+    # Try to fetch config details if available
+    cfg_lines: List[str] = []
+    if isinstance(resp, dict):
+        for k in ('vmess', 'vless', 'trojan', 'shadowsocks', 'ss', 'sing-box', 'clash', 'hysteria'):
+            val = resp.get(k)
+            if isinstance(val, str) and val.strip():
+                cfg_lines.append(val.strip())
+        # Some panels may return an array under 'configs'
+        cfgs = resp.get('configs')
+        if isinstance(cfgs, list):
+            for item in cfgs:
+                if isinstance(item, str) and item.strip():
+                    cfg_lines.append(item.strip())
+
     text = f'Client created.\nUsername: {username}'
-    if sub_url:
-        text += f'\nLink: {sub_url}'
+    if cfg_lines:
+        text += '\n' + '\n'.join(cfg_lines[:5])
     if update.message:
         await update.message.reply_text(text)
     return ConversationHandler.END
