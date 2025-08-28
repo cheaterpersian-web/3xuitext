@@ -38,8 +38,8 @@ from storage.db import (
 )
 
 
-# Conversation states for create flow
-WAIT_NUMERIC_ID, WAIT_INBOUND_SELECT, WAIT_VOLUME_GB, WAIT_DAYS, WAIT_USERNAME = range(5)
+# Conversation states for create flow (numeric id step removed)
+WAIT_INBOUND_SELECT, WAIT_VOLUME_GB, WAIT_DAYS, WAIT_USERNAME = range(4)
 DEFAULT_EXPIRY_DAYS = int(os.getenv('DEFAULT_EXPIRY_DAYS', '30'))
 
 # Conversation state for listing configs
@@ -78,10 +78,45 @@ async def cmd_inbounds(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message:
-        await update.message.reply_text('Send your numeric ID (provided by admin).')
+    # Use Telegram user id as numeric id automatically
     context.user_data.clear()
-    return WAIT_NUMERIC_ID
+    numeric_id = update.effective_user.id
+
+    app = context.application.bot_data['appcfg']
+    await register_user(numeric_id, update.effective_user.id, app.bot.per_user_limit)
+    used = await count_user_configs(numeric_id)
+    urec = await get_user(numeric_id)
+    allowed = int(urec.get('max_configs') if urec else app.bot.per_user_limit)
+    if used >= allowed:
+        if update.message:
+            await update.message.reply_text(f'Limit reached ({used}/{allowed}). Contact admin.')
+        return ConversationHandler.END
+
+    client: ThreeXUIClient = context.application.bot_data['3x']
+    try:
+        inbounds = await client.list_inbounds()
+    except ThreeXUIError as e:
+        if update.message:
+            await update.message.reply_text(f'Failed to list inbounds: {e}')
+        return ConversationHandler.END
+
+    buttons: List[List[InlineKeyboardButton]] = []
+    for item in inbounds[:20]:
+        inbound_id = item.get('id') or item.get('inboundId')
+        title = item.get('remark') or f'Inbound {inbound_id}'
+        if inbound_id is not None:
+            buttons.append([
+                InlineKeyboardButton(
+                    f'{title} (id={inbound_id})', callback_data=f'inb:{inbound_id}:{numeric_id}'
+                )
+            ])
+    if not buttons:
+        if update.message:
+            await update.message.reply_text('No inbounds available.')
+        return ConversationHandler.END
+    if update.message:
+        await update.message.reply_text('Choose inbound:', reply_markup=InlineKeyboardMarkup(buttons))
+    return WAIT_INBOUND_SELECT
 
 
 async def on_numeric_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -745,7 +780,6 @@ def run() -> None:
     conv_create = ConversationHandler(
         entry_points=[CommandHandler('create', create_entry)],
         states={
-            WAIT_NUMERIC_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_numeric_id)],
             WAIT_INBOUND_SELECT: [CallbackQueryHandler(on_inbound_selected, pattern='^inb:')],
             WAIT_VOLUME_GB: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_volume)],
             WAIT_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_days)],
