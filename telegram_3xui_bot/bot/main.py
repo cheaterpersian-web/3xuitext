@@ -315,8 +315,8 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         remain_disp = f"{total_gb} GB"
 
     # server label (do not show host fallback)
-    flag = os.getenv('CONFIG_SERVER_FLAG', '')
-    sname = os.getenv('CONFIG_SERVER_NAME', '')
+    flag = (await get_setting('CONFIG_SERVER_FLAG')) or os.getenv('CONFIG_SERVER_FLAG', '')
+    sname = (await get_setting('CONFIG_SERVER_NAME')) or os.getenv('CONFIG_SERVER_NAME', '')
     server_line = f"\n📡 {flag} سرور کانفیگ : {sname}".rstrip() if (flag or sname) else ''
 
     summary = (
@@ -691,6 +691,28 @@ def _build_vless_from_inbound(appcfg, inbound: dict, uid: str, remark: str) -> s
         return None
 
 
+async def sets_server_label(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+	if not _is_admin(context, update.effective_user.id):
+		if update.message:
+			await update.message.reply_text('Unauthorized.')
+		return
+	# Usage: /sets <name...> <flag>
+	# Practical simple rule: آخرین بخش را به عنوان پرچم می‌گیریم، بقیه را نام سرور
+	parts = (update.message.text or '').strip().split()
+	if len(parts) < 2:
+		await update.message.reply_text('Usage: /sets <name...> <flag>')
+		return
+	# remove command
+	parts = parts[1:]
+	flag = parts[-1]
+	name = ' '.join(parts[:-1])
+	os.environ['CONFIG_SERVER_FLAG'] = flag
+	os.environ['CONFIG_SERVER_NAME'] = name
+	await set_setting('CONFIG_SERVER_FLAG', flag)
+	await set_setting('CONFIG_SERVER_NAME', name)
+	await update.message.reply_text(f'Updated server label: name="{name}", flag="{flag}"')
+
+
 def run() -> None:
     appcfg = load_app_config()
 
@@ -762,6 +784,7 @@ def run() -> None:
     application.add_handler(CommandHandler('set_inbound_port', set_inbound_port))
     application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
     application.add_handler(CommandHandler('set_server', set_server))
+    application.add_handler(CommandHandler('sets', sets_server_label))
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
