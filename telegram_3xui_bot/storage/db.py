@@ -41,6 +41,12 @@ async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
         await db.executescript(SCHEMA)
         await db.commit()
+        # Migrate: add is_test column if missing
+        try:
+            await db.execute("ALTER TABLE configs ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0")
+            await db.commit()
+        except Exception:
+            pass
 
 async def register_user(numeric_id: int, telegram_user_id: int, default_limit: int) -> None:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
@@ -61,13 +67,16 @@ async def get_user(numeric_id: int) -> Optional[Dict[str, Any]]:
 
 async def count_user_configs(numeric_id: int) -> int:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
-        async with db.execute('SELECT COUNT(*) FROM configs WHERE numeric_id = ?', (numeric_id,)) as cur:
+        async with db.execute('SELECT COUNT(*) FROM configs WHERE numeric_id = ? AND COALESCE(is_test,0)=0', (numeric_id,)) as cur:
             row = await cur.fetchone()
             return int(row[0]) if row and row[0] is not None else 0
 
-async def add_config_record(numeric_id: int, telegram_user_id: int, inbound_id: int, client_identifier: str, client_id: str, total_bytes: int, expiry_days: int, raw_response: str) -> None:
+async def add_config_record(numeric_id: int, telegram_user_id: int, inbound_id: int, client_identifier: str, client_id: str, total_bytes: int, expiry_days: int, raw_response: str, is_test: int = 0) -> None:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
-        await db.execute('INSERT INTO configs (numeric_id, telegram_user_id, inbound_id, client_identifier, client_id, total_bytes, expiry_days, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (numeric_id, telegram_user_id, inbound_id, client_identifier, client_id, total_bytes, expiry_days, raw_response))
+        try:
+            await db.execute('INSERT INTO configs (numeric_id, telegram_user_id, inbound_id, client_identifier, client_id, total_bytes, expiry_days, raw_response, is_test) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', (numeric_id, telegram_user_id, inbound_id, client_identifier, client_id, total_bytes, expiry_days, raw_response, is_test))
+        except Exception:
+            await db.execute('INSERT INTO configs (numeric_id, telegram_user_id, inbound_id, client_identifier, client_id, total_bytes, expiry_days, raw_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (numeric_id, telegram_user_id, inbound_id, client_identifier, client_id, total_bytes, expiry_days, raw_response))
         await db.commit()
 
 async def get_configs_by_numeric_id(numeric_id: int) -> List[Dict[str, Any]]:
@@ -76,6 +85,12 @@ async def get_configs_by_numeric_id(numeric_id: int) -> List[Dict[str, Any]]:
         async with db.execute('SELECT * FROM configs WHERE numeric_id = ? ORDER BY created_at DESC', (numeric_id,)) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
+
+async def count_test_configs_by_telegram_user(telegram_user_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        async with db.execute('SELECT COUNT(*) FROM configs WHERE telegram_user_id = ? AND COALESCE(is_test,0)=1', (telegram_user_id,)) as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
 
 
 # Admin settings helpers

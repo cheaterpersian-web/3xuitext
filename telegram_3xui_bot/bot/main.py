@@ -39,6 +39,7 @@ from storage.db import (
     set_inbound_port as db_set_inbound_port,
     get_inbound_port as db_get_inbound_port,
     unset_inbound_port as db_unset_inbound_port,
+    count_test_configs_by_telegram_user,
 )
 
 
@@ -274,6 +275,7 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         int(float(total_gb) * 1024 * 1024 * 1024),
         int(expiry_days),
         str(resp),
+        int(context.user_data.get('is_test', 0)),
     )
     
     # configs extraction
@@ -453,11 +455,16 @@ async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if text == 'کانفیگ تست':
         # set defaults and ask username
+        # allow only once per Telegram user
+        used_tests = await count_test_configs_by_telegram_user(update.effective_user.id)
+        if used_tests >= 1:
+            await update.message.reply_text('شما قبلاً کانفیگ تست دریافت کرده‌اید.')
+            return
         context.user_data['total_gb'] = 1
         context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
+        context.user_data['is_test'] = 1
         if update.message:
             await update.message.reply_text('Username (letters, digits, -):')
-        # next message will be handled by on_username after inbound selection
         return
 
 
