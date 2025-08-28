@@ -41,6 +41,7 @@ from storage.db import (
     get_inbound_port as db_get_inbound_port,
     unset_inbound_port as db_unset_inbound_port,
     count_test_configs_by_telegram_user,
+    get_latest_config_by_identifier,
 )
 
 
@@ -514,6 +515,7 @@ async def on_stats_username(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text('Please send a valid username/email.')
         return WAIT_STATS_USERNAME
     client: ThreeXUIClient = context.application.bot_data['3x']
+    # Attempt to fetch stats; if expiryTime missing afterwards, we will fallback to DB record
     try:
         data = await client.get_client_traffics(email=username)
     except ThreeXUIError as e:
@@ -547,6 +549,24 @@ async def on_stats_username(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         exp_str = 'نامشخص'
         days_left = 'نامشخص'
         status = 'فعال' if bool(data.get('enable', True)) else 'غیرفعال'
+        if exp_ms <= 0:
+            # Fallback 2: derive from our DB record created_at + expiry_days
+            try:
+                rec = await get_latest_config_by_identifier(username)
+                if rec:
+                    from datetime import datetime as _dt
+                    created_iso = rec.get('created_at')
+                    exp_days = int(rec.get('expiry_days') or 0)
+                    if created_iso and exp_days > 0:
+                        try:
+                            created_dt = _dt.fromisoformat(created_iso)
+                        except Exception:
+                            created_dt = _dt.strptime(created_iso.split('.')[0], '%Y-%m-%d %H:%M:%S')
+                        exp_dt = created_dt + timedelta(days=exp_days)
+                        exp_ms = int(exp_dt.timestamp() * 1000)
+            except Exception:
+                pass
+
         if exp_ms > 0:
             dt = datetime.fromtimestamp(exp_ms / 1000.0, tz=timezone.utc).astimezone()
             exp_str = dt.strftime('%Y-%m-%d %H:%M')

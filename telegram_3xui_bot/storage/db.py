@@ -86,6 +86,13 @@ async def get_configs_by_numeric_id(numeric_id: int) -> List[Dict[str, Any]]:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
+async def get_latest_config_by_identifier(client_identifier: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute('SELECT * FROM configs WHERE client_identifier = ? ORDER BY created_at DESC LIMIT 1', (client_identifier,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
 async def count_test_configs_by_telegram_user(telegram_user_id: int) -> int:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
         async with db.execute('SELECT COUNT(*) FROM configs WHERE telegram_user_id = ? AND COALESCE(is_test,0)=1', (telegram_user_id,)) as cur:
