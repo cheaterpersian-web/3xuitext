@@ -99,6 +99,26 @@ async def count_test_configs_by_telegram_user(telegram_user_id: int) -> int:
             row = await cur.fetchone()
             return int(row[0]) if row and row[0] is not None else 0
 
+async def get_user_config_stats() -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        db.row_factory = aiosqlite.Row
+        query = (
+            'SELECT u.numeric_id AS numeric_id, '
+            'u.telegram_user_id AS telegram_user_id, '
+            'COUNT(c.id) AS configs_count, '
+            'COALESCE(SUM(c.total_bytes), 0) AS total_bytes_sum, '
+            'MIN(c.created_at) AS first_created_at, '
+            'MAX(c.created_at) AS last_created_at '
+            'FROM users u '
+            'JOIN configs c ON c.numeric_id = u.numeric_id '
+            'WHERE COALESCE(c.is_test,0)=0 '
+            'GROUP BY u.numeric_id, u.telegram_user_id '
+            'ORDER BY last_created_at DESC'
+        )
+        async with db.execute(query) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
 
 # Admin settings helpers
 async def set_setting(key: str, value: str) -> None:

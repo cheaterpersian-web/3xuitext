@@ -42,6 +42,7 @@ from storage.db import (
     unset_inbound_port as db_unset_inbound_port,
     count_test_configs_by_telegram_user,
     get_latest_config_by_identifier,
+    get_user_config_stats,
 )
 
 
@@ -913,6 +914,38 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		await update.message.reply_text('Help send failed.')
 
 
+async def export_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    rows = await get_user_config_stats()
+    if not rows:
+        await update.message.reply_text('داده‌ای برای خروجی وجود ندارد.')
+        return
+    # build CSV (Excel opens UTF-8 CSV fine)
+    import io, csv
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['numeric_id', 'telegram_user_id', 'configs_count', 'total_gb', 'first_created_at', 'last_created_at'])
+    for r in rows:
+        total_gb = (int(r.get('total_bytes_sum') or 0)) / (1024*1024*1024)
+        writer.writerow([
+            r.get('numeric_id'),
+            r.get('telegram_user_id'),
+            r.get('configs_count'),
+            f"{total_gb:.2f}",
+            r.get('first_created_at'),
+            r.get('last_created_at'),
+        ])
+    data = buf.getvalue().encode('utf-8-sig')
+    buf.close()
+    try:
+        await update.message.reply_document(document=data, filename='user_config_stats.csv', caption='گزارش کاربران (بدون کانفیگ‌های تست)')
+    except Exception:
+        await update.message.reply_text('ارسال فایل گزارش ناموفق بود.')
+
+
 def run() -> None:
     appcfg = load_app_config()
     # Logging config
@@ -998,6 +1031,7 @@ def run() -> None:
     application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(CommandHandler('sets', sets_server_label))
     application.add_handler(CommandHandler('help', admin_help))
+    application.add_handler(CommandHandler('export_users', export_user_stats))
     # No direct handler for inquiry; handled by conv_stats entry_points
     application.add_handler(conv_create)
     application.add_handler(conv_list)
