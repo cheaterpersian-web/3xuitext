@@ -314,16 +314,10 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     except Exception:
         remain_disp = f"{total_gb} GB"
 
-    # server label
+    # server label (do not show host fallback)
     flag = os.getenv('CONFIG_SERVER_FLAG', '')
     sname = os.getenv('CONFIG_SERVER_NAME', '')
-    server_line = ''
-    if flag or sname:
-        server_line = f"\n📡 {flag} سرور کانفیگ : {sname}".rstrip()
-    else:
-        v_host = os.getenv('VLESS_HOST')
-        if v_host:
-            server_line = f"\n📡 سرور کانفیگ : {v_host}"
+    server_line = f"\n📡 {flag} سرور کانفیگ : {sname}".rstrip() if (flag or sname) else ''
 
     summary = (
         f"با موفقیت ایجاد شد 💥\n"
