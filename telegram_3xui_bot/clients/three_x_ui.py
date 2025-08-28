@@ -22,9 +22,13 @@ class ThreeXUIClient:
 
     async def login(self) -> None:
         payload = {"username": self._username, "password": self._password}
-        resp = await self._client.post('/login', json=payload)
+        # Some 3X-UI variants expect form-encoded, others accept JSON
+        resp = await self._client.post('/login', data=payload)
         if resp.status_code >= 400:
-            raise AuthenticationError(f'Login failed: {resp.status_code} {resp.text}')
+            # fallback to JSON body once
+            resp = await self._client.post('/login', json=payload)
+            if resp.status_code >= 400:
+                raise AuthenticationError(f'Login failed: {resp.status_code} {resp.text[:200]}')
         # Rely on Set-Cookie: session
         if 'session' not in resp.cookies and 'session' not in self._client.cookies:
             # Some panels set cookie via redirect; after follow_redirects, use client's cookie jar
@@ -47,8 +51,16 @@ class ThreeXUIClient:
     async def list_inbounds(self) -> List[Dict[str, Any]]:
         resp = await self._request('GET', '/inbounds/list')
         if resp.status_code >= 400:
-            raise ThreeXUIError(f'Failed to list inbounds: {resp.status_code} {resp.text}')
-        data = resp.json()
+            raise ThreeXUIError(f'Failed to list inbounds: {resp.status_code} {resp.text[:200]}')
+        # Ensure response is JSON; if HTML or empty, hint misconfiguration (e.g., wrong base path)
+        try:
+            data = resp.json()
+        except Exception:
+            snippet = (resp.text or '')[:200]
+            raise ThreeXUIError(
+                'Unexpected non-JSON from /inbounds/list. Check PANEL_BASE_URL (scheme/path) and credentials. '
+                f'Response snippet: {snippet}'
+            )
         # Some panels return {"obj": [ ... ]} or plain list
         if isinstance(data, dict) and 'obj' in data:
             return data['obj']
