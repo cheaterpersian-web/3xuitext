@@ -911,9 +911,12 @@ def run() -> None:
         allow_reentry=True,
     )
 
-    # Conversation for viewing stats
+    # Conversation for viewing stats (supports both /mystats and menu button)
     conv_stats = ConversationHandler(
-        entry_points=[CommandHandler('mystats', mystats_entry)],
+        entry_points=[
+            CommandHandler('mystats', mystats_entry),
+            MessageHandler(filters.Regex('^استعلام سرویس$'), mystats_entry),
+        ],
         states={
             WAIT_STATS_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_stats_username)],
         },
@@ -931,8 +934,7 @@ def run() -> None:
     application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
     application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(CommandHandler('sets', sets_server_label))
-    # Main menu text buttons (only inquiry here; create/test are handled by conv entry_points)
-    application.add_handler(MessageHandler(filters.Regex('^(استعلام سرویس)$'), on_main_menu))
+    # No direct handler for inquiry; handled by conv_stats entry_points
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
