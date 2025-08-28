@@ -535,7 +535,15 @@ async def on_stats_username(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         up_g, down_g, total_g, used_g, remain_g = gb(up_b), gb(down_b), gb(total_b), gb(used_b), gb(remain_b)
         pct = (used_b / total_b * 100.0) if total_b > 0 else 0.0
 
-        exp_ms = int(data.get('expiryTime') or 0)
+        # expiryTime may be missing in traffics; fallback to options
+        exp_ms = int(data.get('expiryTime') or data.get('expireTime') or 0)
+        if exp_ms <= 0:
+            try:
+                opts = await client.get_client_options(email=username)
+                src = opts.get('obj') if isinstance(opts, dict) and 'obj' in opts else opts
+                exp_ms = int((src or {}).get('expiryTime') or (src or {}).get('expireTime') or 0)
+            except Exception:
+                exp_ms = 0
         exp_str = 'نامشخص'
         days_left = 'نامشخص'
         status = 'فعال' if bool(data.get('enable', True)) else 'غیرفعال'
@@ -553,7 +561,6 @@ async def on_stats_username(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"حجم کل: {total_g:.2f} GB\n"
             f"مصرف شده: {used_g:.2f} GB ({pct:.1f}%)\n"
             f"باقی‌مانده: {remain_g:.2f} GB\n"
-            f"آپلود: {up_g:.2f} GB | دانلود: {down_g:.2f} GB\n"
             f"انقضا: {exp_str} ({days_left})\n"
             f"وضعیت: {status}"
         )
