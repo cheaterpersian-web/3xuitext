@@ -487,7 +487,7 @@ async def on_list_numeric(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or '').strip()
     if text == 'استعلام سرویس':
-        await myconfigs_entry(update, context)
+        await mystats_entry(update, context)
         return
     # 'ساخت کانفیگ' و 'کانفیگ تست' هر دو به create_entry می‌روند؛ تست در create_entry تشخیص داده می‌شود
     if text in ('ساخت کانفیگ', 'کانفیگ تست'):
@@ -503,7 +503,7 @@ async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def mystats_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message:
-        await update.message.reply_text('Send the username/email of your client to view traffic stats.')
+        await update.message.reply_text('نام کاربری/ایمیل کانفیگ را ارسال کنید تا وضعیت ترافیک نمایش داده شود.')
     return WAIT_STATS_USERNAME
 
 
