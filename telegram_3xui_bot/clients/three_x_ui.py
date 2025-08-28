@@ -114,11 +114,44 @@ class ThreeXUIClient:
             return data
         return data.get('data') or []
 
-    async def add_client(self, *, inbound_id: int, username: str, total_gb: float, expiry_days: int) -> Dict[str, Any]:
+    async def add_client(self, *, inbound_id: int, username: str, total_gb: float, expiry_days: int, client_uuid: Optional[str] = None, sub_id: Optional[str] = None) -> Dict[str, Any]:
         # Try multiple endpoint/payload variants across panel flavors
         total_bytes = int(total_gb * 1024 * 1024 * 1024)
         expiry_ts_ms = int((_time.time() + expiry_days * 86400) * 1000)
+        # Variant A: inbounds/addClient with settings JSON (most common for panel/api)
+        settings_payload = {
+            'id': inbound_id,
+            'settings': httpx.dumps({
+                'clients': [{
+                    'id': client_uuid or str(__import__('uuid').uuid4()),
+                    'alterId': 0,
+                    'email': username,
+                    'totalGB': total_bytes,
+                    'expiryTime': expiry_ts_ms,
+                    'enable': True,
+                    'tgId': '',
+                    'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
+                    'limitIp': 0,
+                    'flow': '',
+                }]
+            }) if hasattr(httpx, 'dumps') else __import__('json').dumps({
+                'clients': [{
+                    'id': client_uuid or str(__import__('uuid').uuid4()),
+                    'alterId': 0,
+                    'email': username,
+                    'totalGB': total_bytes,
+                    'expiryTime': expiry_ts_ms,
+                    'enable': True,
+                    'tgId': '',
+                    'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
+                    'limitIp': 0,
+                    'flow': '',
+                }]
+            })
+        }
+
         payloads = [
+            settings_payload,
             {
                 'inboundId': inbound_id,
                 'email': username,
@@ -136,11 +169,7 @@ class ThreeXUIClient:
                 'limitIp': 0,
             },
         ]
-        paths = [
-            '/client/add',
-            '/inbound/addClient',
-            '/inbounds/addClient',
-        ]
+        paths = ['/inbounds/addClient', '/inbound/addClient', '/client/add']
         errors: List[str] = []
         for path in paths:
             url = self._build_url(path)
@@ -162,13 +191,16 @@ class ThreeXUIClient:
         if client_id:
             params['id'] = client_id
         resp = await self._request('GET', self._build_url('/client/traffics'), params=params)
-        if resp.status_code >= 400:
-            raise ThreeXUIError(f'Failed to get traffics: {resp.status_code} {resp.text[:200]}')
+        if resp.status_code >= 400 or not (resp.headers.get('content-type','').startswith('application/json')):
+            # Fallback to inbounds/getClientTraffics/<email>
+            if email:
+                alt_url = self._build_url(f'/inbounds/getClientTraffics/{email}')
+                resp = await self._request('GET', alt_url)
         try:
             data = resp.json()
         except Exception:
             snippet = (resp.text or '')[:200]
-            raise ThreeXUIError(f'Unexpected non-JSON from /client/traffics. Snippet: {snippet}')
+            raise ThreeXUIError(f'Unexpected non-JSON from traffics endpoint. Snippet: {snippet}')
         if isinstance(data, dict) and 'obj' in data:
             return data['obj']
         return data
