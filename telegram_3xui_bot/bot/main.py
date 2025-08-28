@@ -91,6 +91,15 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     context.user_data.clear()
     numeric_id = update.effective_user.id
 
+    # If started via button 'کانفیگ تست'
+    try:
+        if update.message and (update.message.text or '').strip() == 'کانفیگ تست':
+            context.user_data['is_test'] = 1
+            context.user_data['total_gb'] = 1
+            context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
+    except Exception:
+        pass
+
     app = context.application.bot_data['appcfg']
     await register_user(numeric_id, update.effective_user.id, app.bot.per_user_limit)
     used = await count_user_configs(numeric_id)
@@ -457,23 +466,17 @@ async def on_list_numeric(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (update.message.text or '').strip()
-    if text == 'ساخت کانفیگ':
-        # start create flow
-        await create_entry(update, context)
-        return
     if text == 'استعلام سرویس':
         await myconfigs_entry(update, context)
         return
-    if text == 'کانفیگ تست':
-        # allow only once per Telegram user
-        used_tests = await count_test_configs_by_telegram_user(update.effective_user.id)
-        if used_tests >= 1:
-            await update.message.reply_text('شما قبلاً کانفیگ تست دریافت کرده‌اید.')
-            return
-        context.user_data['total_gb'] = 1
-        context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
-        context.user_data['is_test'] = 1
-        # Go to inbound selection using the normal create flow
+    # 'ساخت کانفیگ' و 'کانفیگ تست' هر دو به create_entry می‌روند؛ تست در create_entry تشخیص داده می‌شود
+    if text in ('ساخت کانفیگ', 'کانفیگ تست'):
+        # allow only once per Telegram user for test
+        if text == 'کانفیگ تست':
+            used_tests = await count_test_configs_by_telegram_user(update.effective_user.id)
+            if used_tests >= 1:
+                await update.message.reply_text('شما قبلاً کانفیگ تست دریافت کرده‌اید.')
+                return
         await create_entry(update, context)
         return
 
