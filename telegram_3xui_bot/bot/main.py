@@ -69,13 +69,13 @@ async def cmd_inbounds(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     client: ThreeXUIClient = context.application.bot_data['3x']
     try:
         inbounds = await client.list_inbounds()
-    except ThreeXUIError as e:
+    except ThreeXUIError:
         if update.message:
-            await update.message.reply_text(f'Failed to list inbounds: {e}')
+            await update.message.reply_text('خطا در دریافت ورودی‌ها')
         return
     if not inbounds:
         if update.message:
-            await update.message.reply_text('No inbounds found.')
+            await update.message.reply_text('هیچ ورودی‌ای یافت نشد.')
         return
     lines: List[str] = []
     for item in inbounds[:20]:
@@ -104,9 +104,9 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     client: ThreeXUIClient = context.application.bot_data['3x']
     try:
         inbounds = await client.list_inbounds()
-    except ThreeXUIError as e:
+    except ThreeXUIError:
         if update.message:
-            await update.message.reply_text(f'Failed to list inbounds: {e}')
+            await update.message.reply_text('خطا در دریافت ورودی‌ها')
         return ConversationHandler.END
 
     buttons: List[List[InlineKeyboardButton]] = []
@@ -121,7 +121,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             ])
     if not buttons:
         if update.message:
-            await update.message.reply_text('No inbounds available.')
+            await update.message.reply_text('هیچ ورودی‌ای در دسترس نیست.')
         return ConversationHandler.END
     if update.message:
         await update.message.reply_text('یک ورودی را انتخاب کنید:', reply_markup=InlineKeyboardMarkup(buttons))
