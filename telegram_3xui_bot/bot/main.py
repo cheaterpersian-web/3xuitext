@@ -7,6 +7,7 @@ import os
 import uuid as _uuid
 import urllib.parse as _up
 from datetime import datetime, timezone, timedelta
+import logging
 from telegram.constants import ParseMode
 import httpx
 from telegram.error import TimedOut
@@ -54,7 +55,11 @@ WAIT_LIST_NUMERIC_ID = 100
 WAIT_STATS_USERNAME = 200
 
 
+logger = logging.getLogger(__name__)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("/start by user_id=%s text=%r", getattr(update.effective_user, 'id', None), getattr(update.message, 'text', ''))
     if update.message:
         kb = ReplyKeyboardMarkup(
             [[KeyboardButton('ساخت کانفیگ')],
@@ -70,6 +75,7 @@ async def cmd_inbounds(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         inbounds = await client.list_inbounds()
     except ThreeXUIError:
+        logger.exception("list_inbounds failed user_id=%s", getattr(update.effective_user, 'id', None))
         if update.message:
             await update.message.reply_text('خطا در دریافت ورودی‌ها')
         return
@@ -90,6 +96,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     # Use Telegram user id as numeric id automatically
     context.user_data.clear()
     numeric_id = update.effective_user.id
+    logger.info("create_entry start user_id=%s via_text=%r", numeric_id, getattr(update.message, 'text', ''))
 
     # If started via button 'کانفیگ تست'
     try:
@@ -106,6 +113,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     urec = await get_user(numeric_id)
     allowed = int(urec.get('max_configs') if urec else app.bot.per_user_limit)
     if used >= allowed:
+        logger.info("limit_reached user_id=%s used=%s allowed=%s", numeric_id, used, allowed)
         if update.message:
             await update.message.reply_text(f'Limit reached ({used}/{allowed}). Contact admin.')
         return ConversationHandler.END
@@ -114,6 +122,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     try:
         inbounds = await client.list_inbounds()
     except ThreeXUIError:
+        logger.exception("list_inbounds failed in create_entry user_id=%s", numeric_id)
         if update.message:
             await update.message.reply_text('خطا در دریافت ورودی‌ها')
         return ConversationHandler.END
@@ -129,6 +138,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 )
             ])
     if not buttons:
+        logger.warning("no_inbounds user_id=%s", numeric_id)
         if update.message:
             await update.message.reply_text('هیچ ورودی‌ای در دسترس نیست.')
         return ConversationHandler.END
@@ -189,11 +199,14 @@ async def on_inbound_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     _, inbound_id_str, numeric_id_str = query.data.split(':', 2)
     context.user_data['inbound_id'] = int(inbound_id_str)
     context.user_data['numeric_id'] = int(numeric_id_str)
+    logger.info("inbound_selected user_id=%s inbound_id=%s is_test=%s", numeric_id_str, inbound_id_str, context.user_data.get('is_test'))
     # If test flow, skip volume and go to username directly
     if int(context.user_data.get('is_test', 0)) == 1:
         await query.edit_message_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
+        logger.info("next_state=WAIT_USERNAME (test) user_id=%s", numeric_id_str)
         return WAIT_USERNAME
     await query.edit_message_text('حجم را بر حسب GB وارد کنید (مثلاً 10)')
+    logger.info("next_state=WAIT_VOLUME_GB user_id=%s", numeric_id_str)
     return WAIT_VOLUME_GB
 
 
@@ -201,6 +214,7 @@ async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw = (update.message.text if update.message else '').strip()
     gb = _parse_float_from_text(raw)
     if gb is None or gb <= 0:
+        logger.info("invalid_volume user_id=%s raw=%r", getattr(update.effective_user, 'id', None), raw)
         if update.message:
             await update.message.reply_text('عدد نامعتبر. مقدار مثبت وارد کنید.')
         return WAIT_VOLUME_GB
@@ -209,6 +223,7 @@ async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
     if update.message:
         await update.message.reply_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
+    logger.info("next_state=WAIT_USERNAME user_id=%s volume_gb=%.2f", getattr(update.effective_user, 'id', None), gb)
     return WAIT_USERNAME
 
 
@@ -224,11 +239,13 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     raw_username = (update.message.text if update.message else '').strip()
     username = _clean_username(raw_username)
     if not username or len(username) < 3:
+        logger.info("invalid_username user_id=%s raw=%r", getattr(update.effective_user, 'id', None), raw_username)
         if update.message:
             await update.message.reply_text('Username is too short. Send another (letters, digits, -).')
         return WAIT_USERNAME
     # validate allowed chars: letters, digits, -
     if not re.fullmatch(r'[A-Za-z0-9\-]+', username):
+        logger.info("username_bad_chars user_id=%s cleaned=%r", getattr(update.effective_user, 'id', None), username)
         if update.message:
             await update.message.reply_text('Only letters, digits, and - are allowed. Send another.')
         return WAIT_USERNAME
@@ -247,6 +264,7 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     try:
         exists = await client.get_client_traffics(email=username)
         if isinstance(exists, dict) and (exists.get('up') is not None or exists.get('obj') is not None or exists.get('total') is not None):
+            logger.info("username_duplicate user_id=%s username=%s", getattr(update.effective_user, 'id', None), username)
             if update.message:
                 await update.message.reply_text('این نام کاربری قبلاً استفاده شده است. نام دیگری بفرستید.')
             return WAIT_USERNAME
@@ -269,9 +287,11 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     except ThreeXUIError as e:
         msg = str(e)
         if 'Duplicate' in msg or 'duplicate' in msg:
+            logger.info("add_client_duplicate user_id=%s username=%s", getattr(update.effective_user, 'id', None), username)
             if update.message:
                 await update.message.reply_text('این نام کاربری قبلاً وجود دارد. نام دیگری بفرستید.')
             return WAIT_USERNAME
+        logger.exception("add_client_failed user_id=%s inbound_id=%s", getattr(update.effective_user, 'id', None), context.user_data.get('inbound_id'))
         if update.message:
             await update.message.reply_text(f'Failed to create client: {e}')
         return ConversationHandler.END
@@ -832,7 +852,12 @@ async def sets_server_label(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 def run() -> None:
     appcfg = load_app_config()
-
+    # Logging config
+    log_level = os.getenv('BOT_LOG_LEVEL', 'INFO').upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format='%(asctime)s %(levelname)s %(name)s: %(message)s'
+    )
     # Ensure an event loop exists (fixes Python 3.10 get_event_loop error)
     try:
         loop = asyncio.get_event_loop()
