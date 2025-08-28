@@ -180,7 +180,11 @@ async def on_inbound_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     _, inbound_id_str, numeric_id_str = query.data.split(':', 2)
     context.user_data['inbound_id'] = int(inbound_id_str)
     context.user_data['numeric_id'] = int(numeric_id_str)
-    await query.edit_message_text('Enter volume limit in GB (e.g., 10)')
+    # If test flow, skip volume and go to username directly
+    if int(context.user_data.get('is_test', 0)) == 1:
+        await query.edit_message_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
+        return WAIT_USERNAME
+    await query.edit_message_text('حجم را بر حسب GB وارد کنید (مثلاً 10)')
     return WAIT_VOLUME_GB
 
 
@@ -189,13 +193,13 @@ async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     gb = _parse_float_from_text(raw)
     if gb is None or gb <= 0:
         if update.message:
-            await update.message.reply_text('Invalid number. Send GB as a positive number.')
+            await update.message.reply_text('عدد نامعتبر. مقدار مثبت وارد کنید.')
         return WAIT_VOLUME_GB
     context.user_data['total_gb'] = gb
     # Set default expiry days and go ask username directly
     context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
     if update.message:
-        await update.message.reply_text('Username (letters, digits, -):')
+        await update.message.reply_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
     return WAIT_USERNAME
 
 
@@ -416,9 +420,16 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 
 async def myconfigs_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if update.message:
-        await update.message.reply_text('Send your numeric ID to view configs.')
-    return WAIT_LIST_NUMERIC_ID
+    # Show this user's configs without asking numeric id
+    rows = await get_configs_by_numeric_id(update.effective_user.id)
+    if not rows:
+        await update.message.reply_text('هیچ سرویسی برای شما ثبت نشده است.')
+        return ConversationHandler.END
+    lines: List[str] = []
+    for r in rows[:10]:
+        lines.append(f"ورودی {r['inbound_id']} | نام {r['client_identifier']} | تاریخ {r['created_at']}")
+    await update.message.reply_text('\n'.join(lines))
+    return ConversationHandler.END
 
 
 async def on_list_numeric(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -454,7 +465,6 @@ async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await myconfigs_entry(update, context)
         return
     if text == 'کانفیگ تست':
-        # set defaults and ask username
         # allow only once per Telegram user
         used_tests = await count_test_configs_by_telegram_user(update.effective_user.id)
         if used_tests >= 1:
@@ -463,8 +473,8 @@ async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         context.user_data['total_gb'] = 1
         context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
         context.user_data['is_test'] = 1
-        if update.message:
-            await update.message.reply_text('Username (letters, digits, -):')
+        # Go to inbound selection using the normal create flow
+        await create_entry(update, context)
         return
 
 
