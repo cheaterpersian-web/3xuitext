@@ -7,6 +7,7 @@ import os
 import uuid as _uuid
 import urllib.parse as _up
 from datetime import datetime, timezone, timedelta
+from telegram.constants import ParseMode
 import httpx
 from telegram.error import TimedOut
 from telegram.request import HTTPXRequest
@@ -384,6 +385,27 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                     await update.message.reply_text(cfg_lines[0])
                 except Exception:
                     pass
+
+        # Instruction message with download links
+        instruction_html = (
+            "توجه : تحت هیچ عنوان اسم کانفیگ رو تغییر ندهید چون در صورت تغییر، گارانتی کانفیگ توسط شما باطل می‌شود🚨\n\n"
+            "📱 برای استفاده در اندروید از برنامه های :\n"
+            "- <a href='https://play.google.com/store/apps/details?id=com.v2ray.ang'>V2RayNG</a>\n"
+            "- <a href='https://play.google.com/store/apps/details?id=io.nekohasekai.sfa'>V2Box</a>\n"
+            "- <a href='https://play.google.com/store/apps/details?id=com.napsternetlabs.napsternetv'>NpV Tunnel</a>\n\n"
+            "📱 و در گوشی های آیفون از برنامه های :\n\n"
+            "- <a href='https://apps.apple.com/app/v2box-shadowsocks-v2ray/id6446814690'>V2Box</a>\n"
+            "- <a href='https://apps.apple.com/app/napsternetv/id1629465476'>NpV Tunnel</a>\n\n"
+            "و برای استفاده در ویندوز از <a href='https://www.google.com/search?q=v2rayn+download'>V2rayN</a> 💻 استفاده کنید."
+        )
+        try:
+            await update.message.reply_text(instruction_html, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        except TimedOut:
+            try:
+                await asyncio.sleep(1)
+                await update.message.reply_text(instruction_html, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            except Exception:
+                pass
     return ConversationHandler.END
 
 
