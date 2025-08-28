@@ -27,6 +27,7 @@ from storage.db import (
     add_config_record,
     get_configs_by_numeric_id,
     set_user_limit,
+    get_user,
 )
 
 
@@ -87,9 +88,11 @@ async def on_numeric_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     app = context.application.bot_data['appcfg']
     await register_user(numeric_id, update.effective_user.id, app.bot.per_user_limit)
     used = await count_user_configs(numeric_id)
-    if used >= app.bot.per_user_limit:
+    urec = await get_user(numeric_id)
+    allowed = int(urec.get('max_configs') if urec else app.bot.per_user_limit)
+    if used >= allowed:
         if update.message:
-            await update.message.reply_text(f'Limit reached ({used}/{app.bot.per_user_limit}). Contact admin.')
+            await update.message.reply_text(f'Limit reached ({used}/{allowed}). Contact admin.')
         return ConversationHandler.END
 
     client: ThreeXUIClient = context.application.bot_data['3x']
