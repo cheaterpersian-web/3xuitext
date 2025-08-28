@@ -12,7 +12,7 @@ import httpx
 from telegram.error import TimedOut
 from telegram.request import HTTPXRequest
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -55,9 +55,13 @@ WAIT_STATS_USERNAME = 200
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(
-            'Welcome. Use /create to create a config, /myconfigs to list, /mystats to view usage.'
+        kb = ReplyKeyboardMarkup(
+            [[KeyboardButton('ساخت کانفیگ')],
+             [KeyboardButton('استعلام سرویس')],
+             [KeyboardButton('کانفیگ تست')]],
+            resize_keyboard=True
         )
+        await update.message.reply_text('لطفاً یک گزینه را انتخاب کنید:', reply_markup=kb)
 
 
 async def cmd_inbounds(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -119,7 +123,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             await update.message.reply_text('No inbounds available.')
         return ConversationHandler.END
     if update.message:
-        await update.message.reply_text('Choose inbound:', reply_markup=InlineKeyboardMarkup(buttons))
+        await update.message.reply_text('یک ورودی را انتخاب کنید:', reply_markup=InlineKeyboardMarkup(buttons))
     return WAIT_INBOUND_SELECT
 
 
@@ -436,6 +440,25 @@ async def on_list_numeric(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if update.message:
         await update.message.reply_text('\n'.join(lines))
     return ConversationHandler.END
+
+
+async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (update.message.text or '').strip()
+    if text == 'ساخت کانفیگ':
+        # start create flow
+        await create_entry(update, context)
+        return
+    if text == 'استعلام سرویس':
+        await myconfigs_entry(update, context)
+        return
+    if text == 'کانفیگ تست':
+        # set defaults and ask username
+        context.user_data['total_gb'] = 1
+        context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
+        if update.message:
+            await update.message.reply_text('Username (letters, digits, -):')
+        # next message will be handled by on_username after inbound selection
+        return
 
 
 async def mystats_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -860,6 +883,8 @@ def run() -> None:
     application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
     application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(CommandHandler('sets', sets_server_label))
+    # Main menu text buttons
+    application.add_handler(MessageHandler(filters.Regex('^(ساخت کانفیگ|استعلام سرویس|کانفیگ تست)$'), on_main_menu))
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
