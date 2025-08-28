@@ -7,6 +7,9 @@ import os
 import uuid as _uuid
 import urllib.parse as _up
 from datetime import datetime, timezone, timedelta
+import httpx
+from telegram.error import TimedOut
+from telegram.request import HTTPXRequest
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -364,9 +367,23 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     )
 
     if update.message:
-        await update.message.reply_text(summary)
+        try:
+            await update.message.reply_text(summary)
+        except TimedOut:
+            try:
+                await asyncio.sleep(1)
+                await update.message.reply_text(summary)
+            except Exception:
+                pass
         if cfg_lines:
-            await update.message.reply_text(cfg_lines[0])
+            try:
+                await update.message.reply_text(cfg_lines[0])
+            except TimedOut:
+                try:
+                    await asyncio.sleep(1)
+                    await update.message.reply_text(cfg_lines[0])
+                except Exception:
+                    pass
     return ConversationHandler.END
 
 
@@ -762,7 +779,9 @@ def run() -> None:
     loop.run_until_complete(init_db())
 
     # Build Telegram application
-    application = Application.builder().token(appcfg.bot.token).build()
+    # Configure HTTPX request with more generous timeouts to reduce Telegram timeouts
+    req = HTTPXRequest(timeout=httpx.Timeout(30.0, connect=15.0))
+    application = Application.builder().token(appcfg.bot.token).request(req).build()
 
     # Prepare API client in bot_data (created in the running loop via post init)
     async def _post_init(_: Application) -> None:
@@ -822,6 +841,22 @@ def run() -> None:
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
+
+    # Global error handler to avoid noisy logs on transient network issues
+    async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        err = context.error
+        # Swallow common network timeouts silently
+        if isinstance(err, TimedOut):
+            return
+        if isinstance(err, httpx.TimeoutException) or isinstance(err, httpx.ConnectTimeout):
+            return
+        # Fallback: print minimal log
+        try:
+            print(f"Unhandled error: {err}")
+        except Exception:
+            pass
+
+    application.add_error_handler(_on_error)
 
     # Blocking call - handles its own event loop internally
     application.run_polling()
