@@ -1,6 +1,8 @@
 import asyncio
 from typing import List
 import re
+import random
+import string
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -151,7 +153,16 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    username = (update.message.text if update.message else '').strip()
+    raw_username = (update.message.text if update.message else '').strip()
+    # Accept keywords for random username
+    lowered = _fa2en_digits(raw_username).strip().lower()
+    wants_random = lowered in {'random', 'rand', 'رندوم', 'خودکار'}
+    # Sanitize
+    candidate = _clean_username(raw_username)
+    # If empty, purely digits, or too short, or user asked for random => generate
+    if wants_random or not candidate or candidate.isdigit() or len(candidate) < 3:
+        candidate = _generate_username('u', update.effective_user.id)
+    username = candidate
     inbound_id = context.user_data.get('inbound_id')
     numeric_id = context.user_data.get('numeric_id')
     total_gb = context.user_data.get('total_gb')
@@ -323,6 +334,19 @@ def _parse_float_from_text(text: str) -> float | None:
         return float(num)
     except Exception:
         return None
+
+
+def _clean_username(text: str) -> str:
+    # keep letters, digits, - _ . @
+    s = _fa2en_digits(text)
+    s = re.sub(r'[^A-Za-z0-9._@-]+', '', s)
+    return s[:64]
+
+
+def _generate_username(prefix: str, seed: int | None = None) -> str:
+    rng = random.Random(seed or 0)
+    suffix = ''.join(rng.choices(string.ascii_lowercase + string.digits, k=8))
+    return f"{prefix}{suffix}"
 
 
 def run() -> None:
