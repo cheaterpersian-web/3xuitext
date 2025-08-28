@@ -118,7 +118,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if used >= allowed:
         logger.info("limit_reached user_id=%s used=%s allowed=%s", numeric_id, used, allowed)
         if update.message:
-            await update.message.reply_text(f'Limit reached ({used}/{allowed}). Contact admin.')
+            await update.message.reply_text('شما به محدودیت ساخت رسیدید .با ادمین در ارتباط باشید\n@Driven_Under')
         return ConversationHandler.END
 
     client: ThreeXUIClient = context.application.bot_data['3x']
@@ -905,7 +905,9 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		"<b>۶) تنظیم سرور کامل</b>\n"
 		"<code>/set_server &lt;host&gt; [port] [flag] [name...]</code>\n"
 		"مثال: <code>/set_server shop2.mhzshop.xyz 12836 🇩🇪 آلمان</code>\n\n"
-		"<b>۷) مشاهده تنظیمات</b>\n"
+		"<b>۷) خروجی کاربران</b>\n"
+		"<code>/export_users</code> — فایل CSV ستونی: هر ستون یک numeric_id؛ ردیف‌ها: نام کانفیگ (حجم GB)\n\n"
+		"<b>۸) مشاهده تنظیمات</b>\n"
 		"<code>/admin_settings</code> — نمایش کلیدهای تنظیمات\n"
 		"لاگ دیباگ: اجرای ربات با <code>BOT_LOG_LEVEL=DEBUG</code>\n"
 	)
