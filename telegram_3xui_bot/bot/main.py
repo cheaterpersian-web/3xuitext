@@ -28,7 +28,7 @@ from storage.db import (
 
 
 # Conversation states for create flow
-WAIT_NUMERIC_ID, WAIT_INBOUND_SELECT, WAIT_VOLUME_GB, WAIT_DAYS, WAIT_USERNAME = range(5)
+WAIT_NUMERIC_ID, WAIT_INBOUND_SELECT, WAIT_VOLUME_GB, WAIT_DAYS = range(4)
 
 # Conversation state for listing configs
 WAIT_LIST_NUMERIC_ID = 100
@@ -147,9 +147,66 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text('Invalid days. Enter a positive integer.')
         return WAIT_DAYS
     context.user_data['expiry_days'] = days
+
+    # Auto-generate username and create client immediately
+    inbound_id = context.user_data.get('inbound_id')
+    numeric_id = context.user_data.get('numeric_id')
+    total_gb = context.user_data.get('total_gb')
+    expiry_days = context.user_data.get('expiry_days')
+
+    if not all(v is not None for v in (inbound_id, numeric_id, total_gb, expiry_days)):
+        if update.message:
+            await update.message.reply_text('Flow lost state. Please /create again.')
+        return ConversationHandler.END
+
+    # Generate a reasonably unique username
+    base_prefix = 'u'
+    if update.effective_user and update.effective_user.id:
+        base_prefix += str(update.effective_user.id)[-4:]
+    username = _generate_username(base_prefix)
+
+    app = context.application.bot_data['appcfg']
+    client: ThreeXUIClient = context.application.bot_data['3x']
+    try:
+        resp = await client.add_client(
+            inbound_id=int(inbound_id),
+            username=username,
+            total_gb=float(total_gb),
+            expiry_days=int(expiry_days),
+        )
+    except ThreeXUIError as e:
+        if update.message:
+            await update.message.reply_text(f'Failed to create client: {e}')
+        return ConversationHandler.END
+
+    sub_url = ''
+    if isinstance(resp, dict):
+        sub_url = resp.get('subscription') or resp.get('url') or ''
+    if not sub_url:
+        base = getattr(app, 'subscription_base_url', '')
+        if base:
+            sub_url = f"{base.rstrip('/')}/{username}"
+
+    client_id = (
+        str(resp.get('id') or resp.get('clientId') or '') if isinstance(resp, dict) else ''
+    )
+    await add_config_record(
+        int(numeric_id),
+        update.effective_user.id,
+        int(inbound_id),
+        username,
+        client_id,
+        int(float(total_gb) * 1024 * 1024 * 1024),
+        int(expiry_days),
+        str(resp),
+    )
+
+    text = f'Client created.\nUsername: {username}'
+    if sub_url:
+        text += f'\nLink: {sub_url}'
     if update.message:
-        await update.message.reply_text('Enter a username identifier (email-like or name)')
-    return WAIT_USERNAME
+        await update.message.reply_text(text)
+    return ConversationHandler.END
 
 
 async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -385,7 +442,6 @@ def run() -> None:
             WAIT_INBOUND_SELECT: [CallbackQueryHandler(on_inbound_selected, pattern='^inb:')],
             WAIT_VOLUME_GB: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_volume)],
             WAIT_DAYS: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_days)],
-            WAIT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_username)],
         },
         fallbacks=[],
         allow_reentry=True,
