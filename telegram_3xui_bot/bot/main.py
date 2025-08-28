@@ -1,5 +1,6 @@
 import asyncio
 from typing import List
+import re
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -124,11 +125,9 @@ async def on_inbound_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        gb = float((update.message.text if update.message else '').strip())
-        if gb <= 0:
-            raise ValueError
-    except Exception:
+    raw = (update.message.text if update.message else '').strip()
+    gb = _parse_float_from_text(raw)
+    if gb is None or gb <= 0:
         if update.message:
             await update.message.reply_text('Invalid number. Send GB as a positive number.')
         return WAIT_VOLUME_GB
@@ -139,11 +138,9 @@ async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        days = int((update.message.text if update.message else '').strip())
-        if days <= 0:
-            raise ValueError
-    except Exception:
+    raw = (update.message.text if update.message else '').strip()
+    days = _parse_int_from_text(raw)
+    if days is None or days <= 0:
         if update.message:
             await update.message.reply_text('Invalid days. Enter a positive integer.')
         return WAIT_DAYS
@@ -298,6 +295,34 @@ async def setlimit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await set_user_limit(numeric_id, limit)
     if update.message:
         await update.message.reply_text(f'Set limit {limit} for numeric ID {numeric_id}.')
+
+
+def _fa2en_digits(text: str) -> str:
+    mapping = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
+    return text.translate(mapping)
+
+
+def _parse_int_from_text(text: str) -> int | None:
+    s = _fa2en_digits(text)
+    match = re.search(r'(\d+)', s)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
+def _parse_float_from_text(text: str) -> float | None:
+    s = _fa2en_digits(text)
+    match = re.search(r'(\d+(?:[\.,]\d+)?)', s)
+    if not match:
+        return None
+    num = match.group(1).replace(',', '.')
+    try:
+        return float(num)
+    except Exception:
+        return None
 
 
 def run() -> None:
