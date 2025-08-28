@@ -43,6 +43,7 @@ from storage.db import (
     count_test_configs_by_telegram_user,
     get_latest_config_by_identifier,
     get_user_config_stats,
+    get_all_configs_non_test,
 )
 
 
@@ -919,29 +920,40 @@ async def export_user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if update.message:
             await update.message.reply_text('Unauthorized.')
         return
-    rows = await get_user_config_stats()
-    if not rows:
+    # New layout: each numeric_id becomes a column; under it list of config names, alongside sizes
+    configs = await get_all_configs_non_test()
+    if not configs:
         await update.message.reply_text('داده‌ای برای خروجی وجود ندارد.')
         return
-    # build CSV (Excel opens UTF-8 CSV fine)
+    # group by numeric_id
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for r in configs:
+        total_gb = (int(r.get('total_bytes') or 0)) / (1024*1024*1024)
+        grouped[r['numeric_id']].append((r['client_identifier'], total_gb))
+    # build CSV pivot-like: header = numeric ids; rows = max len list; cells = "name (size GB)"
     import io, csv
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(['numeric_id', 'telegram_user_id', 'configs_count', 'total_gb', 'first_created_at', 'last_created_at'])
-    for r in rows:
-        total_gb = (int(r.get('total_bytes_sum') or 0)) / (1024*1024*1024)
-        writer.writerow([
-            r.get('numeric_id'),
-            r.get('telegram_user_id'),
-            r.get('configs_count'),
-            f"{total_gb:.2f}",
-            r.get('first_created_at'),
-            r.get('last_created_at'),
-        ])
+    headers = list(grouped.keys())
+    headers.sort()
+    writer.writerow(headers)
+    max_len = max(len(v) for v in grouped.values())
+    for i in range(max_len):
+        row = []
+        for nid in headers:
+            items = grouped[nid]
+            if i < len(items):
+                name, size_gb = items[i]
+                cell = f"{name} ({size_gb:.2f} GB)"
+            else:
+                cell = ''
+            row.append(cell)
+        writer.writerow(row)
     data = buf.getvalue().encode('utf-8-sig')
     buf.close()
     try:
-        await update.message.reply_document(document=data, filename='user_config_stats.csv', caption='گزارش کاربران (بدون کانفیگ‌های تست)')
+        await update.message.reply_document(document=data, filename='user_configs_pivot.csv', caption='گزارش ستونی کاربران (بدون کانفیگ‌های تست)')
     except Exception:
         await update.message.reply_text('ارسال فایل گزارش ناموفق بود.')
 

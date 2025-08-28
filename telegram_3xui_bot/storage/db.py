@@ -119,6 +119,17 @@ async def get_user_config_stats() -> List[Dict[str, Any]]:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
+async def get_all_configs_non_test() -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            'SELECT numeric_id, client_identifier, total_bytes '
+            'FROM configs WHERE COALESCE(is_test,0)=0 '
+            'ORDER BY numeric_id ASC, created_at ASC'
+        ) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
 
 # Admin settings helpers
 async def set_setting(key: str, value: str) -> None:
