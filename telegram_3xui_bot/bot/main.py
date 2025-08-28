@@ -164,6 +164,8 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.effective_user and update.effective_user.id:
         base_prefix += str(update.effective_user.id)[-4:]
     username = _generate_username(base_prefix)
+    uid = str(_uuid.uuid4())
+    sub_id = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16))
 
     app = context.application.bot_data['appcfg']
     client: ThreeXUIClient = context.application.bot_data['3x']
@@ -173,6 +175,8 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             username=username,
             total_gb=float(total_gb),
             expiry_days=int(expiry_days),
+            client_uuid=uid,
+            sub_id=sub_id,
         )
     except ThreeXUIError as e:
         if update.message:
@@ -206,6 +210,28 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             for item in cfgs:
                 if isinstance(item, str) and item.strip():
                     cfg_lines.append(item.strip())
+
+    # Build VLESS config line if env is provided
+    v_host = os.getenv('VLESS_HOST')
+    v_port = os.getenv('VLESS_PORT')
+    if v_host and v_port:
+        v_type = os.getenv('VLESS_TYPE', 'tcp')
+        v_path = os.getenv('VLESS_PATH', '/')
+        v_sni = os.getenv('VLESS_SNI', '')
+        v_hdr = os.getenv('VLESS_HEADER_TYPE', 'http')
+        v_sec = os.getenv('VLESS_SECURITY', 'none')
+        suffix = os.getenv('CONFIG_REMARK_SUFFIX', '')
+        remark = _up.quote(username + suffix)
+        q = {
+            'type': v_type,
+            'path': v_path,
+            'host': v_sni,
+            'headerType': v_hdr,
+            'security': v_sec,
+        }
+        query = '&'.join(f"{k}={_up.quote(str(v))}" for k, v in q.items() if str(v))
+        cfg_line = f"vless://{uid}@{v_host}:{v_port}?{query}#{remark}"
+        cfg_lines.insert(0, cfg_line)
 
     text = f'Client created.\nUsername: {username}'
     if cfg_lines:

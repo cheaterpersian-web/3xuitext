@@ -43,6 +43,7 @@ def _normalize_base_url(value: str) -> str:
         if not rest or rest.startswith('/'):
             return f'https://{host}{rest}'
     # Default: assume https
+    # If value already embeds a path like /DrivenUnder or /panel/api, keep it
     return f'https://{v}'
 
 def load_app_config() -> AppConfig:

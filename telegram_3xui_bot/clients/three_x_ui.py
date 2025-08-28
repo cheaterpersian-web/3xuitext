@@ -127,7 +127,7 @@ class ThreeXUIClient:
                     'alterId': 0,
                     'email': username,
                     'totalGB': total_bytes,
-                    'expiryTime': expiry_ts_ms,
+                    'expiryTime': -2592000000,
                     'enable': True,
                     'tgId': '',
                     'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
@@ -140,7 +140,7 @@ class ThreeXUIClient:
                     'alterId': 0,
                     'email': username,
                     'totalGB': total_bytes,
-                    'expiryTime': expiry_ts_ms,
+                    'expiryTime': -2592000000,
                     'enable': True,
                     'tgId': '',
                     'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
@@ -169,7 +169,8 @@ class ThreeXUIClient:
                 'limitIp': 0,
             },
         ]
-        paths = ['/inbounds/addClient', '/inbound/addClient', '/client/add']
+        # Prioritize the exact path used in your working script
+        paths = ['/panel/api/inbounds/addClient', '/inbounds/addClient', '/inbound/addClient', '/client/add']
         errors: List[str] = []
         for path in paths:
             url = self._build_url(path)
