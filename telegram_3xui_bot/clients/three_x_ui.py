@@ -50,6 +50,10 @@ class ThreeXUIClient:
             resp = await self._client.request(method, url, **kwargs)
         return resp
 
+    def _build_url(self, path: str) -> str:
+        prefix = self._api_prefix or ''
+        return f"{prefix}{path}"
+
     async def _probe_inbounds_endpoint(self) -> list[dict[str, any]]:
         prefixes = ['', '/xui', '/panel', '/api', '/xui/api', '/panel/api']
         tried: list[str] = []
@@ -118,7 +122,7 @@ class ThreeXUIClient:
             'expiryTime': expiry_days,
             'enable': True,
         }
-        resp = await self._request('POST', '/client/add', json=payload)
+        resp = await self._request('POST', self._build_url('/client/add'), json=payload)
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to add client: {resp.status_code} {resp.text}')
         try:
@@ -132,10 +136,17 @@ class ThreeXUIClient:
             params['email'] = email
         if client_id:
             params['id'] = client_id
-        resp = await self._request('GET', '/client/traffics', params=params)
+        resp = await self._request('GET', self._build_url('/client/traffics'), params=params)
         if resp.status_code >= 400:
-            raise ThreeXUIError(f'Failed to get traffics: {resp.status_code} {resp.text}')
-        return resp.json()
+            raise ThreeXUIError(f'Failed to get traffics: {resp.status_code} {resp.text[:200]}')
+        try:
+            data = resp.json()
+        except Exception:
+            snippet = (resp.text or '')[:200]
+            raise ThreeXUIError(f'Unexpected non-JSON from /client/traffics. Snippet: {snippet}')
+        if isinstance(data, dict) and 'obj' in data:
+            return data['obj']
+        return data
 
     async def get_client_options(self, *, email: Optional[str] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
         params: Dict[str, Any] = {}
@@ -143,13 +154,13 @@ class ThreeXUIClient:
             params['email'] = email
         if client_id:
             params['id'] = client_id
-        resp = await self._request('GET', '/client/options', params=params)
+        resp = await self._request('GET', self._build_url('/client/options'), params=params)
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to get client options: {resp.status_code} {resp.text}')
         return resp.json()
 
     async def get_online_clients(self) -> Dict[str, Any]:
-        resp = await self._request('GET', '/online-clients')
+        resp = await self._request('GET', self._build_url('/online-clients'))
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to get online clients: {resp.status_code} {resp.text}')
         return resp.json()
@@ -160,7 +171,7 @@ class ThreeXUIClient:
             payload['email'] = email
         if client_id:
             payload['id'] = client_id
-        resp = await self._request('POST', '/client/reset', json=payload)
+        resp = await self._request('POST', self._build_url('/client/reset'), json=payload)
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to reset traffic: {resp.status_code} {resp.text}')
         return resp.json()
@@ -169,32 +180,32 @@ class ThreeXUIClient:
         payload: Dict[str, Any] = {}
         if inbound_id is not None:
             payload['inboundId'] = inbound_id
-        resp = await self._request('POST', '/inbound/delete-depleted-clients', json=payload)
+        resp = await self._request('POST', self._build_url('/inbound/delete-depleted-clients'), json=payload)
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to delete depleted clients: {resp.status_code} {resp.text}')
         return resp.json()
 
     async def delete_client(self, *, inbound_id: int, client_id: str) -> Dict[str, Any]:
         payload = {'inboundId': inbound_id, 'id': client_id}
-        resp = await self._request('POST', '/client/delete', json=payload)
+        resp = await self._request('POST', self._build_url('/client/delete'), json=payload)
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to delete client: {resp.status_code} {resp.text}')
         return resp.json()
 
     async def get_inbound(self, *, inbound_id: int) -> Dict[str, Any]:
-        resp = await self._request('GET', f'/inbound/{inbound_id}')
+        resp = await self._request('GET', self._build_url(f'/inbound/{inbound_id}'))
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to get inbound: {resp.status_code} {resp.text}')
         return resp.json()
 
     async def reset_inbounds_traffic(self) -> Dict[str, Any]:
-        resp = await self._request('POST', '/reset-inbounds-traffic')
+        resp = await self._request('POST', self._build_url('/reset-inbounds-traffic'))
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to reset inbounds traffic: {resp.status_code} {resp.text}')
         return resp.json()
 
     async def reset_all_clients_traffic(self) -> Dict[str, Any]:
-        resp = await self._request('POST', '/reset-all-clients-traffic')
+        resp = await self._request('POST', self._build_url('/reset-all-clients-traffic'))
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to reset all clients traffic: {resp.status_code} {resp.text}')
         return resp.json()
