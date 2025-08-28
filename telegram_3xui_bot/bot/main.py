@@ -877,6 +877,42 @@ async def sets_server_label(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 	await update.message.reply_text(f'Updated server label: name="{name}", flag="{flag}"')
 
 
+async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+	if not _is_admin(context, update.effective_user.id):
+		if update.message:
+			await update.message.reply_text('Unauthorized.')
+		return
+	text = (
+		"<b>راهنمای دستورات مدیریت ربات</b>\n\n"
+		"<b>۱) محدودیت ساخت کانفیگ</b>\n"
+		"<code>/setlimit &lt;numeric_id&gt; &lt;limit&gt;</code>\n"
+		"مثال: <code>/setlimit 6839887159 10</code>\n\n"
+		"<b>۲) تنظیمات پیش‌فرض مدت اعتبار</b>\n"
+		"<code>/set_default_expiry &lt;days&gt;</code> — پیش‌فرض روزهای اعتبار ساخت\n"
+		"مثال: <code>/set_default_expiry 30</code>\n\n"
+		"<b>۳) تنظیم پارامترهای ساخت vless</b>\n"
+		"<code>/set_vless host=... port=... [type=.. path=.. sni=.. header=.. security=.. suffix=..]</code>\n"
+		"مثال: <code>/set_vless host=shop2.mhzshop.xyz port=12836 type=tcp path=/ header=http security=none</code>\n\n"
+		"<b>۴) تعیین پورت اختصاصی ورودی</b>\n"
+		"<code>/set_inbound_port &lt;inbound_id&gt; &lt;port&gt;</code> — فقط روی همان ورودی اعمال می‌شود\n"
+		"<code>/unset_inbound_port &lt;inbound_id&gt;</code> — حذف تنظیم پورت ورودی\n"
+		"مثال: <code>/set_inbound_port 18 12836</code>\n\n"
+		"<b>۵) برچسب نمایش سرور</b>\n"
+		"<code>/sets &lt;name...&gt; &lt;flag&gt;</code> — فقط نام/پرچم را در پیام خلاصه نشان می‌دهد\n"
+		"مثال: <code>/sets آلمان 🇩🇪</code>\n\n"
+		"<b>۶) تنظیم سرور کامل</b>\n"
+		"<code>/set_server &lt;host&gt; [port] [flag] [name...]</code>\n"
+		"مثال: <code>/set_server shop2.mhzshop.xyz 12836 🇩🇪 آلمان</code>\n\n"
+		"<b>۷) مشاهده تنظیمات</b>\n"
+		"<code>/admin_settings</code> — نمایش کلیدهای تنظیمات\n"
+		"لاگ دیباگ: اجرای ربات با <code>BOT_LOG_LEVEL=DEBUG</code>\n"
+	)
+	try:
+		await update.message.reply_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+	except Exception:
+		await update.message.reply_text('Help send failed.')
+
+
 def run() -> None:
     appcfg = load_app_config()
     # Logging config
@@ -961,6 +997,7 @@ def run() -> None:
     application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
     application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(CommandHandler('sets', sets_server_label))
+    application.add_handler(CommandHandler('help', admin_help))
     # No direct handler for inquiry; handled by conv_stats entry_points
     application.add_handler(conv_create)
     application.add_handler(conv_list)
