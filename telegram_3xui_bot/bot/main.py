@@ -273,11 +273,51 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         cfg_line = f"vless://{uid}@{v_host}:{v_port}?{query}#{remark}"
         cfg_lines.insert(0, cfg_line)
 
-    text = f'Client created.\nUsername: {username}'
-    if cfg_lines:
-        text += '\n' + '\n'.join(cfg_lines[:5])
+    # Build Persian summary message
+    try:
+        # expiry date: use API if present otherwise now + days
+        exp_ms = 0
+        if isinstance(resp, dict):
+            exp_ms = int(resp.get('expiryTime') or 0)
+        if exp_ms > 0:
+            dt_exp = datetime.fromtimestamp(exp_ms / 1000.0, tz=timezone.utc).astimezone()
+        else:
+            dt_exp = datetime.now(tz=timezone.utc).astimezone() + timedelta(days=int(expiry_days))
+        exp_str = dt_exp.strftime('%Y-%m-%d')
+    except Exception:
+        exp_str = ''
+
+    # remaining equals total at creation time
+    try:
+        total_gb_f = float(total_gb)
+        remain_disp = f"{int(total_gb_f)} GB" if abs(total_gb_f - int(total_gb_f)) < 1e-9 else f"{total_gb_f:.2f} GB"
+    except Exception:
+        remain_disp = f"{total_gb} GB"
+
+    # server label
+    flag = os.getenv('CONFIG_SERVER_FLAG', '')
+    sname = os.getenv('CONFIG_SERVER_NAME', '')
+    server_line = ''
+    if flag or sname:
+        server_line = f"\n📡 {flag} سرور کانفیگ : {sname}".rstrip()
+    else:
+        v_host = os.getenv('VLESS_HOST')
+        if v_host:
+            server_line = f"\n📡 سرور کانفیگ : {v_host}"
+
+    summary = (
+        f"با موفقیت ایجاد شد 💥\n"
+        f"📅 تاریخ انقضا :{exp_str}\n"
+        f"✏️ نام کانفیگ : {username} \n"
+        f"🔋 حجم باقی مانده : {remain_disp} \n"
+        f"🚶‍♂️ محدودیت کاربر : ندارد"
+        f"{server_line}"
+    )
+
     if update.message:
-        await update.message.reply_text(text)
+        await update.message.reply_text(summary)
+        if cfg_lines:
+            await update.message.reply_text(cfg_lines[0])
     return ConversationHandler.END
 
 
