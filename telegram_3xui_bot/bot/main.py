@@ -831,9 +831,8 @@ def run() -> None:
     loop.run_until_complete(init_db())
 
     # Build Telegram application
-    # Configure HTTPX request with more generous timeouts to reduce Telegram timeouts
-    req = HTTPXRequest(timeout=httpx.Timeout(30.0, connect=15.0))
-    application = Application.builder().token(appcfg.bot.token).request(req).build()
+    # Build application with default request backend
+    application = Application.builder().token(appcfg.bot.token).build()
 
     # Prepare API client in bot_data (created in the running loop via post init)
     async def _post_init(_: Application) -> None:
