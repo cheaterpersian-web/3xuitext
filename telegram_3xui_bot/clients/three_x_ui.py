@@ -16,6 +16,8 @@ class ThreeXUIClient:
         self._password = password
         self._client = httpx.AsyncClient(base_url=self._base_url, timeout=timeout, verify=not insecure, follow_redirects=True)
         self._last_login_at: float = 0.0
+        self._api_prefix: str | None = None
+        self._use_plural_inbounds: bool | None = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -48,17 +50,55 @@ class ThreeXUIClient:
             resp = await self._client.request(method, url, **kwargs)
         return resp
 
+    async def _probe_inbounds_endpoint(self) -> list[dict[str, any]]:
+        prefixes = ['', '/xui', '/panel', '/api', '/xui/api', '/panel/api']
+        tried: list[str] = []
+        for prefix in prefixes:
+            for use_plural in (True, False):
+                path = '/inbounds/list' if use_plural else '/inbound/list'
+                full = f"{prefix}{path}"
+                tried.append(full)
+                resp = await self._request('GET', full)
+                if resp.status_code >= 400:
+                    continue
+                try:
+                    data = resp.json()
+                except Exception:
+                    continue
+                # Normalize
+                if isinstance(data, dict) and 'obj' in data and isinstance(data['obj'], list):
+                    self._api_prefix = prefix
+                    self._use_plural_inbounds = use_plural
+                    return data['obj']
+                if isinstance(data, list):
+                    self._api_prefix = prefix
+                    self._use_plural_inbounds = use_plural
+                    return data
+                inner = data.get('data') if isinstance(data, dict) else None
+                if isinstance(inner, list):
+                    self._api_prefix = prefix
+                    self._use_plural_inbounds = use_plural
+                    return inner
+        raise ThreeXUIError(
+            'Could not locate inbounds endpoint. Tried: ' + ', '.join(tried)
+        )
+
     async def list_inbounds(self) -> List[Dict[str, Any]]:
-        resp = await self._request('GET', '/inbounds/list')
+        # Probe once to find correct prefix and pluralization if unknown
+        if self._api_prefix is None or self._use_plural_inbounds is None:
+            return await self._probe_inbounds_endpoint()
+
+        path = '/inbounds/list' if self._use_plural_inbounds else '/inbound/list'
+        url = f"{self._api_prefix}{path}"
+        resp = await self._request('GET', url)
         if resp.status_code >= 400:
             raise ThreeXUIError(f'Failed to list inbounds: {resp.status_code} {resp.text[:200]}')
-        # Ensure response is JSON; if HTML or empty, hint misconfiguration (e.g., wrong base path)
         try:
             data = resp.json()
         except Exception:
             snippet = (resp.text or '')[:200]
             raise ThreeXUIError(
-                'Unexpected non-JSON from /inbounds/list. Check PANEL_BASE_URL (scheme/path) and credentials. '
+                f'Unexpected non-JSON from {url}. Check PANEL_BASE_URL (scheme/path) and credentials. '
                 f'Response snippet: {snippet}'
             )
         # Some panels return {"obj": [ ... ]} or plain list
