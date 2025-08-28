@@ -886,7 +886,11 @@ def run() -> None:
 
     # Create conversation for creating configs
     conv_create = ConversationHandler(
-        entry_points=[CommandHandler('create', create_entry)],
+        entry_points=[
+            CommandHandler('create', create_entry),
+            MessageHandler(filters.Regex('^ساخت کانفیگ$'), create_entry),
+            MessageHandler(filters.Regex('^کانفیگ تست$'), create_entry),
+        ],
         states={
             WAIT_INBOUND_SELECT: [CallbackQueryHandler(on_inbound_selected, pattern='^inb:')],
             WAIT_VOLUME_GB: [MessageHandler(filters.TEXT & ~filters.COMMAND, on_volume)],
@@ -927,8 +931,8 @@ def run() -> None:
     application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
     application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(CommandHandler('sets', sets_server_label))
-    # Main menu text buttons
-    application.add_handler(MessageHandler(filters.Regex('^(ساخت کانفیگ|استعلام سرویس|کانفیگ تست)$'), on_main_menu))
+    # Main menu text buttons (only inquiry here; create/test are handled by conv entry_points)
+    application.add_handler(MessageHandler(filters.Regex('^(استعلام سرویس)$'), on_main_menu))
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
