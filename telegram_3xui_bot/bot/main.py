@@ -333,6 +333,7 @@ def run() -> None:
         },
         fallbacks=[],
         allow_reentry=True,
+        per_message=True,
     )
 
     # Conversation for listing configs
@@ -363,7 +364,7 @@ def run() -> None:
     application.add_handler(conv_stats)
 
     # Blocking call - handles its own event loop internally
-    application.run_polling(close_loop=False)
+    application.run_polling()
 
 import asyncio
 from typing import List
