@@ -6,6 +6,7 @@ import string
 import os
 import uuid as _uuid
 import urllib.parse as _up
+from datetime import datetime, timezone
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -378,15 +379,47 @@ async def on_stats_username(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await update.message.reply_text(f'Failed to fetch stats: {e}')
         return ConversationHandler.END
 
-    text_lines: List[str] = []
-    if isinstance(data, dict):
-        for key in ['up', 'down', 'total', 'remain', 'expiryTime', 'enable']:
-            if key in data:
-                text_lines.append(f'{key}: {data[key]}')
-    if not text_lines:
-        text_lines.append(str(data))
+    # Pretty format the traffic info
+    try:
+        up_b = int(data.get('up', 0) or 0)
+        down_b = int(data.get('down', 0) or 0)
+        total_b = int(data.get('total', 0) or 0)
+        used_b = up_b + down_b
+        remain_b = max(0, total_b - used_b)
+
+        def gb(x: int) -> float:
+            return x / (1024 * 1024 * 1024)
+
+        up_g, down_g, total_g, used_g, remain_g = gb(up_b), gb(down_b), gb(total_b), gb(used_b), gb(remain_b)
+        pct = (used_b / total_b * 100.0) if total_b > 0 else 0.0
+
+        exp_ms = int(data.get('expiryTime') or 0)
+        exp_str = 'نامشخص'
+        days_left = 'نامشخص'
+        status = 'فعال' if bool(data.get('enable', True)) else 'غیرفعال'
+        if exp_ms > 0:
+            dt = datetime.fromtimestamp(exp_ms / 1000.0, tz=timezone.utc).astimezone()
+            exp_str = dt.strftime('%Y-%m-%d %H:%M')
+            now = datetime.now(tz=timezone.utc).astimezone()
+            delta = dt - now
+            days_left = f"{max(0, delta.days)} روز"
+            if delta.total_seconds() < 0:
+                status = 'منقضی'
+
+        text = (
+            f"نام کاربری: {username}\n"
+            f"حجم کل: {total_g:.2f} GB\n"
+            f"مصرف شده: {used_g:.2f} GB ({pct:.1f}%)\n"
+            f"باقی‌مانده: {remain_g:.2f} GB\n"
+            f"آپلود: {up_g:.2f} GB | دانلود: {down_g:.2f} GB\n"
+            f"انقضا: {exp_str} ({days_left})\n"
+            f"وضعیت: {status}"
+        )
+    except Exception:
+        text = str(data)
+
     if update.message:
-        await update.message.reply_text('\n'.join(text_lines))
+        await update.message.reply_text(text)
     return ConversationHandler.END
 
 
