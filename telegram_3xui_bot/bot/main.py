@@ -217,6 +217,19 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 if isinstance(item, str) and item.strip():
                     cfg_lines.append(item.strip())
 
+    # If not provided by API, try to construct from inbound details
+    if not cfg_lines:
+        try:
+            inbound = await client.get_inbound(inbound_id=int(inbound_id))
+            if isinstance(inbound, dict):
+                # Sometimes object under 'obj'
+                inb = inbound.get('obj') if 'obj' in inbound else inbound
+                vless_line = _build_vless_from_inbound(app, inb, uid, username)
+                if vless_line:
+                    cfg_lines.append(vless_line)
+        except Exception:
+            pass
+
     # Build VLESS config line if env is provided
     v_host = os.getenv('VLESS_HOST')
     v_port = os.getenv('VLESS_PORT')
@@ -442,6 +455,64 @@ def _generate_username(prefix: str, seed: int | None = None) -> str:
     rng = random.Random(seed or 0)
     suffix = ''.join(rng.choices(string.ascii_lowercase + string.digits, k=8))
     return f"{prefix}{suffix}"
+
+
+def _build_vless_from_inbound(appcfg, inbound: dict, uid: str, remark: str) -> str | None:
+    try:
+        port = inbound.get('port') or inbound.get('listen_port')
+        if not port:
+            return None
+        # Host: prefer env VLESS_HOST, else derive from PANEL_BASE_URL
+        v_host = os.getenv('VLESS_HOST')
+        if not v_host:
+            try:
+                parsed = _up.urlparse(appcfg.panel.base_url)
+                v_host = parsed.hostname or ''
+            except Exception:
+                v_host = ''
+        if not v_host:
+            return None
+
+        stream = inbound.get('streamSettings') or {}
+        network = (stream.get('network') or 'tcp').lower()
+        security = 'none'
+        tls = stream.get('security') or ''
+        if isinstance(tls, str) and tls.lower() in ('tls', 'reality'):
+            security = tls.lower()
+
+        # Extract path/host/headerType from ws/http/tcp settings
+        path = ''
+        host_hdr = ''
+        header_type = ''
+        ws = stream.get('wsSettings') or {}
+        if ws:
+            path = ws.get('path') or ''
+            headers = ws.get('headers') or {}
+            host_hdr = headers.get('Host') or headers.get('host') or ''
+        tcp = stream.get('tcpSettings') or {}
+        if tcp:
+            hdr = (tcp.get('header') or {})
+            header_type = (hdr.get('type') or '')
+            if header_type.lower() == 'http':
+                req = hdr.get('request') or {}
+                hosts = req.get('headers', {}).get('Host') or []
+                if isinstance(hosts, list) and hosts:
+                    host_hdr = hosts[0]
+
+        # Build vless URL
+        q = {'type': network}
+        if path:
+            q['path'] = path
+        if host_hdr:
+            q['host'] = host_hdr
+        if header_type:
+            q['headerType'] = header_type
+        if security and security != 'none':
+            q['security'] = security
+        query = '&'.join(f"{k}={_up.quote(str(v))}" for k, v in q.items() if str(v))
+        return f"vless://{uid}@{v_host}:{port}?{query}#{_up.quote(remark)}"
+    except Exception:
+        return None
 
 
 def run() -> None:
