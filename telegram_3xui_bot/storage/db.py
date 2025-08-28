@@ -25,6 +25,16 @@ CREATE TABLE IF NOT EXISTS configs (
   raw_response TEXT,
   FOREIGN KEY(numeric_id) REFERENCES users(numeric_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inbound_ports (
+  inbound_id INTEGER PRIMARY KEY,
+  port INTEGER NOT NULL
+);
 '''
 
 async def init_db() -> None:
@@ -66,4 +76,42 @@ async def get_configs_by_numeric_id(numeric_id: int) -> List[Dict[str, Any]]:
         async with db.execute('SELECT * FROM configs WHERE numeric_id = ? ORDER BY created_at DESC', (numeric_id,)) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
+
+
+# Admin settings helpers
+async def set_setting(key: str, value: str) -> None:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        await db.execute('REPLACE INTO settings (key, value) VALUES (?, ?)', (key, value))
+        await db.commit()
+
+async def get_setting(key: str) -> Optional[str]:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute('SELECT value FROM settings WHERE key = ?', (key,)) as cur:
+            row = await cur.fetchone()
+            return row['value'] if row else None
+
+async def get_all_settings() -> Dict[str, Any]:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute('SELECT key, value FROM settings') as cur:
+            rows = await cur.fetchall()
+            return {r['key']: r['value'] for r in rows}
+
+async def set_inbound_port(inbound_id: int, port: int) -> None:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        await db.execute('REPLACE INTO inbound_ports (inbound_id, port) VALUES (?, ?)', (inbound_id, port))
+        await db.commit()
+
+async def get_inbound_port(inbound_id: int) -> Optional[int]:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute('SELECT port FROM inbound_ports WHERE inbound_id = ?', (inbound_id,)) as cur:
+            row = await cur.fetchone()
+            return int(row['port']) if row else None
+
+async def unset_inbound_port(inbound_id: int) -> None:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        await db.execute('DELETE FROM inbound_ports WHERE inbound_id = ?', (inbound_id,))
+        await db.commit()
 

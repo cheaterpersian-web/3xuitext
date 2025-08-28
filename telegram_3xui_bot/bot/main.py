@@ -6,7 +6,7 @@ import string
 import os
 import uuid as _uuid
 import urllib.parse as _up
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -29,6 +29,12 @@ from storage.db import (
     get_configs_by_numeric_id,
     set_user_limit,
     get_user,
+    set_setting,
+    get_setting,
+    get_all_settings,
+    set_inbound_port as db_set_inbound_port,
+    get_inbound_port as db_get_inbound_port,
+    unset_inbound_port as db_unset_inbound_port,
 )
 
 
@@ -254,6 +260,20 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     # env-based vless
     v_host = os.getenv('VLESS_HOST')
     v_port = os.getenv('VLESS_PORT')
+    try:
+        override_port = await db_get_inbound_port(int(inbound_id))
+        if override_port:
+            v_port = str(override_port)
+    except Exception:
+        pass
+    v_host = os.getenv('VLESS_HOST')
+    v_port = os.getenv('VLESS_PORT')
+    try:
+        override_port = await db_get_inbound_port(int(inbound_id))
+        if override_port:
+            v_port = str(override_port)
+    except Exception:
+        pass
     if v_host and v_port:
         v_type = os.getenv('VLESS_TYPE', 'tcp')
         v_path = os.getenv('VLESS_PATH', '/')
@@ -481,6 +501,106 @@ def _generate_username(prefix: str, seed: int | None = None) -> str:
     return f"{prefix}{base}-{rnd3}"
 
 
+def _is_admin(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    app = context.application.bot_data['appcfg']
+    admin_ids = set(app.bot.admin_numeric_ids or [])
+    return user_id in admin_ids
+
+
+async def admin_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    kv = await get_all_settings()
+    lines = [f"{k}={v}" for k, v in kv.items()]
+    if not lines:
+        lines = ['<empty>']
+    await update.message.reply_text('\n'.join(lines))
+
+
+async def set_default_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    parts = (update.message.text or '').strip().split()
+    if len(parts) != 2:
+        await update.message.reply_text('Usage: /set_default_expiry <days>')
+        return
+    try:
+        days = int(parts[1])
+        if days <= 0:
+            raise ValueError
+    except Exception:
+        await update.message.reply_text('Invalid days.')
+        return
+    await set_setting('default_expiry_days', str(days))
+    await update.message.reply_text(f'Default expiry set to {days} days.')
+
+
+async def set_vless(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    # format: /set_vless host=... port=... type=... path=... sni=... header=http security=none suffix=-...
+    text = (update.message.text or '')
+    items = text.split()[1:]
+    if not items:
+        await update.message.reply_text('Usage: /set_vless host=.. port=.. [type=.. path=.. sni=.. header=.. security=.. suffix=..]')
+        return
+    allowed = {'host':'VLESS_HOST','port':'VLESS_PORT','type':'VLESS_TYPE','path':'VLESS_PATH','sni':'VLESS_SNI','header':'VLESS_HEADER_TYPE','security':'VLESS_SECURITY','suffix':'CONFIG_REMARK_SUFFIX'}
+    changes = []
+    for it in items:
+        if '=' not in it:
+            continue
+        k, v = it.split('=', 1)
+        if k in allowed:
+            os.environ[allowed[k]] = v
+            changes.append(f"{allowed[k]}={v}")
+    if not changes:
+        await update.message.reply_text('No valid keys. Allowed: ' + ','.join(allowed.keys()))
+        return
+    await update.message.reply_text('Updated: ' + ', '.join(changes))
+
+
+async def set_inbound_port(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    parts = (update.message.text or '').strip().split()
+    if len(parts) != 3:
+        await update.message.reply_text('Usage: /set_inbound_port <inbound_id> <port>')
+        return
+    try:
+        inbound_id = int(parts[1]); port = int(parts[2])
+        if port <= 0 or port > 65535:
+            raise ValueError
+    except Exception:
+        await update.message.reply_text('Provide valid inbound id and port (1-65535).')
+        return
+    await db_set_inbound_port(inbound_id, port)
+    await update.message.reply_text(f'Inbound {inbound_id} port overridden to {port}.')
+
+
+async def unset_inbound_port(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    parts = (update.message.text or '').strip().split()
+    if len(parts) != 2:
+        await update.message.reply_text('Usage: /unset_inbound_port <inbound_id>')
+        return
+    try:
+        inbound_id = int(parts[1])
+    except Exception:
+        await update.message.reply_text('Provide a valid inbound id.')
+        return
+    await db_unset_inbound_port(inbound_id)
+    await update.message.reply_text(f'Inbound {inbound_id} port override removed.')
 def _build_vless_from_inbound(appcfg, inbound: dict, uid: str, remark: str) -> str | None:
     try:
         port = inbound.get('port') or inbound.get('listen_port')
@@ -604,6 +724,11 @@ def run() -> None:
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('inbounds', cmd_inbounds))
     application.add_handler(CommandHandler('setlimit', setlimit))
+    application.add_handler(CommandHandler('admin_settings', admin_settings))
+    application.add_handler(CommandHandler('set_default_expiry', set_default_expiry))
+    application.add_handler(CommandHandler('set_vless', set_vless))
+    application.add_handler(CommandHandler('set_inbound_port', set_inbound_port))
+    application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
