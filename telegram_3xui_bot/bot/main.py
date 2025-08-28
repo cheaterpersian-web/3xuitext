@@ -33,7 +33,7 @@ from storage.db import (
 
 
 # Conversation states for create flow
-WAIT_NUMERIC_ID, WAIT_INBOUND_SELECT, WAIT_VOLUME_GB, WAIT_DAYS = range(4)
+WAIT_NUMERIC_ID, WAIT_INBOUND_SELECT, WAIT_VOLUME_GB, WAIT_DAYS, WAIT_USERNAME = range(5)
 
 # Conversation state for listing configs
 WAIT_LIST_NUMERIC_ID = 100
@@ -154,28 +154,48 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text('Invalid days. Enter a positive integer.')
         return WAIT_DAYS
     context.user_data['expiry_days'] = days
+    if update.message:
+        await update.message.reply_text('Username (letters, digits, -):')
+    return WAIT_USERNAME
 
-    # Auto-generate username and create client immediately
+
+async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    raw_username = (update.message.text if update.message else '').strip()
+    username = _clean_username(raw_username)
+    if not username or len(username) < 3:
+        if update.message:
+            await update.message.reply_text('Username is too short. Send another (letters, digits, -).')
+        return WAIT_USERNAME
+    # validate allowed chars: letters, digits, -
+    if not re.fullmatch(r'[A-Za-z0-9\-]+', username):
+        if update.message:
+            await update.message.reply_text('Only letters, digits, and - are allowed. Send another.')
+        return WAIT_USERNAME
     inbound_id = context.user_data.get('inbound_id')
     numeric_id = context.user_data.get('numeric_id')
     total_gb = context.user_data.get('total_gb')
     expiry_days = context.user_data.get('expiry_days')
-
     if not all(v is not None for v in (inbound_id, numeric_id, total_gb, expiry_days)):
         if update.message:
             await update.message.reply_text('Flow lost state. Please /create again.')
         return ConversationHandler.END
 
-    # Generate a reasonably unique username
-    base_prefix = 'u'
-    if update.effective_user and update.effective_user.id:
-        base_prefix += str(update.effective_user.id)[-4:]
-    username = _generate_username(base_prefix)
+    app = context.application.bot_data['appcfg']
+    client: ThreeXUIClient = context.application.bot_data['3x']
+    # duplicate check
+    try:
+        exists = await client.get_client_traffics(email=username)
+        if isinstance(exists, dict) and (exists.get('up') is not None or exists.get('obj') is not None or exists.get('total') is not None):
+            if update.message:
+                await update.message.reply_text('این نام کاربری قبلاً استفاده شده است. نام دیگری بفرستید.')
+            return WAIT_USERNAME
+    except Exception:
+        pass
+
+    # create identifiers
     uid = str(_uuid.uuid4())
     sub_id = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16))
 
-    app = context.application.bot_data['appcfg']
-    client: ThreeXUIClient = context.application.bot_data['3x']
     try:
         resp = await client.add_client(
             inbound_id=int(inbound_id),
@@ -186,6 +206,11 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             sub_id=sub_id,
         )
     except ThreeXUIError as e:
+        msg = str(e)
+        if 'Duplicate' in msg or 'duplicate' in msg:
+            if update.message:
+                await update.message.reply_text('این نام کاربری قبلاً وجود دارد. نام دیگری بفرستید.')
+            return WAIT_USERNAME
         if update.message:
             await update.message.reply_text(f'Failed to create client: {e}')
         return ConversationHandler.END
@@ -203,27 +228,24 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         int(expiry_days),
         str(resp),
     )
-
-    # Try to fetch config details if available
+    
+    # configs extraction
     cfg_lines: List[str] = []
     if isinstance(resp, dict):
         for k in ('vmess', 'vless', 'trojan', 'shadowsocks', 'ss', 'sing-box', 'clash', 'hysteria'):
             val = resp.get(k)
             if isinstance(val, str) and val.strip():
                 cfg_lines.append(val.strip())
-        # Some panels may return an array under 'configs'
         cfgs = resp.get('configs')
         if isinstance(cfgs, list):
             for item in cfgs:
                 if isinstance(item, str) and item.strip():
                     cfg_lines.append(item.strip())
 
-    # If not provided by API, try to construct from inbound details
     if not cfg_lines:
         try:
             inbound = await client.get_inbound(inbound_id=int(inbound_id))
             if isinstance(inbound, dict):
-                # Sometimes object under 'obj'
                 inb = inbound.get('obj') if 'obj' in inbound else inbound
                 vless_line = _build_vless_from_inbound(app, inb, uid, username)
                 if vless_line:
@@ -231,7 +253,7 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         except Exception:
             pass
 
-    # Build VLESS config line if env is provided
+    # env-based vless
     v_host = os.getenv('VLESS_HOST')
     v_port = os.getenv('VLESS_PORT')
     if v_host and v_port:
@@ -256,75 +278,6 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     text = f'Client created.\nUsername: {username}'
     if cfg_lines:
         text += '\n' + '\n'.join(cfg_lines[:5])
-    if update.message:
-        await update.message.reply_text(text)
-    return ConversationHandler.END
-
-
-async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    raw_username = (update.message.text if update.message else '').strip()
-    # Accept keywords for random username
-    lowered = _fa2en_digits(raw_username).strip().lower()
-    wants_random = lowered in {'random', 'rand', 'رندوم', 'خودکار'}
-    # Sanitize
-    candidate = _clean_username(raw_username)
-    # If empty, purely digits, or too short, or user asked for random => generate
-    if wants_random or not candidate or candidate.isdigit() or len(candidate) < 3:
-        candidate = _generate_username('u', update.effective_user.id)
-    username = candidate
-    inbound_id = context.user_data.get('inbound_id')
-    numeric_id = context.user_data.get('numeric_id')
-    total_gb = context.user_data.get('total_gb')
-    expiry_days = context.user_data.get('expiry_days')
-    if not all(v is not None for v in (inbound_id, numeric_id, total_gb, expiry_days)):
-        if update.message:
-            await update.message.reply_text('Flow lost state. Please /create again.')
-        return ConversationHandler.END
-
-    app = context.application.bot_data['appcfg']
-    if await count_user_configs(numeric_id) >= app.bot.per_user_limit:
-        if update.message:
-            await update.message.reply_text('Limit reached. Contact admin.')
-        return ConversationHandler.END
-
-    client: ThreeXUIClient = context.application.bot_data['3x']
-    try:
-        resp = await client.add_client(
-            inbound_id=inbound_id,
-            username=username,
-            total_gb=float(total_gb),
-            expiry_days=int(expiry_days),
-        )
-    except ThreeXUIError as e:
-        if update.message:
-            await update.message.reply_text(f'Failed to create client: {e}')
-        return ConversationHandler.END
-
-    sub_url = ''
-    if isinstance(resp, dict):
-        sub_url = resp.get('subscription') or resp.get('url') or ''
-    if not sub_url:
-        base = getattr(app, 'subscription_base_url', '')
-        if base:
-            sub_url = f"{base.rstrip('/')}/{username}"
-
-    client_id = (
-        str(resp.get('id') or resp.get('clientId') or '') if isinstance(resp, dict) else ''
-    )
-    await add_config_record(
-        int(numeric_id),
-        update.effective_user.id,
-        int(inbound_id),
-        username,
-        client_id,
-        int(float(total_gb) * 1024 * 1024 * 1024),
-        int(expiry_days),
-        str(resp),
-    )
-
-    text = 'Client created.'
-    if sub_url:
-        text += f'\nLink: {sub_url}'
     if update.message:
         await update.message.reply_text(text)
     return ConversationHandler.END
