@@ -34,6 +34,7 @@ from storage.db import (
 
 # Conversation states for create flow
 WAIT_NUMERIC_ID, WAIT_INBOUND_SELECT, WAIT_VOLUME_GB, WAIT_DAYS, WAIT_USERNAME = range(5)
+DEFAULT_EXPIRY_DAYS = int(os.getenv('DEFAULT_EXPIRY_DAYS', '30'))
 
 # Conversation state for listing configs
 WAIT_LIST_NUMERIC_ID = 100
@@ -141,19 +142,16 @@ async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await update.message.reply_text('Invalid number. Send GB as a positive number.')
         return WAIT_VOLUME_GB
     context.user_data['total_gb'] = gb
+    # Set default expiry days and go ask username directly
+    context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
     if update.message:
-        await update.message.reply_text('Enter expiration days (e.g., 30)')
-    return WAIT_DAYS
+        await update.message.reply_text('Username (letters, digits, -):')
+    return WAIT_USERNAME
 
 
 async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    raw = (update.message.text if update.message else '').strip()
-    days = _parse_int_from_text(raw)
-    if days is None or days <= 0:
-        if update.message:
-            await update.message.reply_text('Invalid days. Enter a positive integer.')
-        return WAIT_DAYS
-    context.user_data['expiry_days'] = days
+    # Legacy handler kept for safety; we now default to 30 days and skip asking days.
+    context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
     if update.message:
         await update.message.reply_text('Username (letters, digits, -):')
     return WAIT_USERNAME
