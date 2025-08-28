@@ -565,6 +565,44 @@ async def set_vless(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text('Updated: ' + ', '.join(changes))
 
 
+async def set_server(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    # Usage: /set_server <host> [port] [flag] [name...]
+    parts = (update.message.text or '').strip().split()
+    if len(parts) < 2:
+        await update.message.reply_text('Usage: /set_server <host> [port] [flag] [name...]')
+        return
+    host = parts[1]
+    port = None
+    flag = ''
+    name = ''
+    if len(parts) >= 3 and parts[2].isdigit():
+        port = parts[2]
+    if len(parts) >= 4:
+        flag = parts[3]
+    if len(parts) >= 5:
+        name = ' '.join(parts[4:])
+    os.environ['VLESS_HOST'] = host
+    await set_setting('VLESS_HOST', host)
+    changed = [f'HOST={host}']
+    if port:
+        os.environ['VLESS_PORT'] = port
+        await set_setting('VLESS_PORT', port)
+        changed.append(f'PORT={port}')
+    if flag:
+        os.environ['CONFIG_SERVER_FLAG'] = flag
+        await set_setting('CONFIG_SERVER_FLAG', flag)
+        changed.append(f'FLAG={flag}')
+    if name:
+        os.environ['CONFIG_SERVER_NAME'] = name
+        await set_setting('CONFIG_SERVER_NAME', name)
+        changed.append(f'NAME={name}')
+    await update.message.reply_text('Server config updated: ' + ', '.join(changed))
+
+
 async def set_inbound_port(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         if update.message:
@@ -729,6 +767,7 @@ def run() -> None:
     application.add_handler(CommandHandler('set_vless', set_vless))
     application.add_handler(CommandHandler('set_inbound_port', set_inbound_port))
     application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
+    application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
