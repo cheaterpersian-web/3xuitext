@@ -121,6 +121,27 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
             await update.message.reply_text('شما به محدودیت ساخت رسیدید .با ادمین در ارتباط باشید\n@Driven_Under')
         return ConversationHandler.END
 
+    # If admin has set a default inbound, skip listing and use it
+    try:
+        default_inb = await get_setting('default_inbound_id')
+    except Exception:
+        default_inb = None
+    if default_inb:
+        try:
+            inbound_id_int = int(default_inb)
+            context.user_data['inbound_id'] = inbound_id_int
+            context.user_data['numeric_id'] = numeric_id
+            # If test flow, go to username directly, else ask volume
+            if int(context.user_data.get('is_test', 0)) == 1:
+                if update.message:
+                    await update.message.reply_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
+                return WAIT_USERNAME
+            if update.message:
+                await update.message.reply_text('حجم را بر حسب GB وارد کنید (مثلاً 10)')
+            return WAIT_VOLUME_GB
+        except Exception:
+            pass
+
     client: ThreeXUIClient = context.application.bot_data['3x']
     try:
         inbounds = await client.list_inbounds()
@@ -699,6 +720,24 @@ async def set_default_expiry(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(f'Default expiry set to {days} days.')
 
 
+async def set_default_inbound(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    parts = (update.message.text or '').strip().split()
+    if len(parts) != 2:
+        await update.message.reply_text('Usage: /set_default_inbound <inbound_id>')
+        return
+    try:
+        inbound_id = int(parts[1])
+    except Exception:
+        await update.message.reply_text('Provide a valid inbound id.')
+        return
+    await set_setting('default_inbound_id', str(inbound_id))
+    await update.message.reply_text(f'Default inbound set to {inbound_id}.')
+
+
 async def set_vless(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         if update.message:
@@ -905,9 +944,12 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		"<b>۶) تنظیم سرور کامل</b>\n"
 		"<code>/set_server &lt;host&gt; [port] [flag] [name...]</code>\n"
 		"مثال: <code>/set_server shop2.mhzshop.xyz 12836 🇩🇪 آلمان</code>\n\n"
-		"<b>۷) خروجی کاربران</b>\n"
+		"<b>۷) تعیین ورودی پیش‌فرض ساخت</b>\n"
+		"ابتدا /inbounds را بزنید و شناسه ورودی را ببینید، سپس:\n"
+		"<code>/set_default_inbound &lt;inbound_id&gt;</code> — همه ساخت‌ها با این ورودی انجام می‌شود (تست/عادی)\n\n"
+		"<b>۸) خروجی کاربران</b>\n"
 		"<code>/export_users</code> — فایل CSV ستونی: هر ستون یک numeric_id؛ ردیف‌ها: نام کانفیگ (حجم GB)\n\n"
-		"<b>۸) مشاهده تنظیمات</b>\n"
+		"<b>۹) مشاهده تنظیمات</b>\n"
 		"<code>/admin_settings</code> — نمایش کلیدهای تنظیمات\n"
 		"لاگ دیباگ: اجرای ربات با <code>BOT_LOG_LEVEL=DEBUG</code>\n"
 	)
@@ -1046,6 +1088,7 @@ def run() -> None:
     application.add_handler(CommandHandler('sets', sets_server_label))
     application.add_handler(CommandHandler('help', admin_help))
     application.add_handler(CommandHandler('export_users', export_user_stats))
+    application.add_handler(CommandHandler('set_default_inbound', set_default_inbound))
     # No direct handler for inquiry; handled by conv_stats entry_points
     application.add_handler(conv_create)
     application.add_handler(conv_list)
