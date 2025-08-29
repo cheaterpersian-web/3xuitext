@@ -726,16 +726,11 @@ async def set_prices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text('Prices updated.')
 
 
-async def show_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    # fetch configs for this numeric_id (Telegram ID is used)
-    rows = await get_configs_by_numeric_id(user_id)
-    # Exclude test configs
+async def _build_invoice_text(context: ContextTypes.DEFAULT_TYPE, numeric_id: int) -> str:
+    rows = await get_configs_by_numeric_id(numeric_id)
     rows = [r for r in rows if int(r.get('is_test') or 0) == 0]
     if not rows:
-        await update.message.reply_text('هیچ کانفیگی ثبت نشده است.')
-        return
-    # Prices (defaults): full=2000, under=3000 (per GB)
+        return 'هیچ کانفیگی ثبت نشده است.'
     try:
         p_full = int((await get_setting('price_full_100gb')) or '2000')
     except Exception:
@@ -753,18 +748,13 @@ async def show_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     for r in rows:
         gb = to_gb(r.get('total_bytes') or 0)
         name = r.get('client_identifier') or '-'
-        if abs(gb - 100.0) < 1e-6 or gb >= 100.0:  # treat >=100 as 100-tier
+        if abs(gb - 100.0) < 1e-6 or gb >= 100.0:
             full_items.append((name, gb))
         else:
             under_items.append((name, gb))
 
-    # compute totals
     full_sum_gb = sum(g for _, g in full_items)
     under_sum_gb = sum(g for _, g in under_items)
-    # billing policy per request:
-    # - exactly 100GB -> per-GB price p_full
-    # - below 100GB -> per-GB price p_under
-    # round up to 2 decimals for display, price uses exact GB as stored
     full_cost = int(round(full_sum_gb * p_full))
     under_cost = int(round(under_sum_gb * p_under))
     total_cost = full_cost + under_cost
@@ -790,7 +780,32 @@ async def show_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     lines.append(f"مجموع حجم زیر۱۰۰: {under_sum_gb:.2f} GB | مبلغ: {under_cost:,} تومان")
     lines.append('')
     lines.append(f"مجموع بدهی: {total_cost:,} تومان")
-    await update.message.reply_text('\n'.join(lines))
+    return '\n'.join(lines)
+
+
+async def show_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    text = await _build_invoice_text(context, user_id)
+    await update.message.reply_text(text)
+
+
+async def admin_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    parts = (update.message.text or '').strip().split()
+    if len(parts) != 2:
+        await update.message.reply_text('Usage: /invoice <numeric_id>')
+        return
+    try:
+        num_text = _fa2en_digits(parts[1])
+        numeric_id = int(num_text)
+    except Exception:
+        await update.message.reply_text('Invalid numeric_id.')
+        return
+    text = await _build_invoice_text(context, numeric_id)
+    await update.message.reply_text(text)
 async def admin_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         if update.message:
@@ -1052,9 +1067,10 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		"<code>/set_default_inbound &lt;inbound_id&gt;</code> — همه ساخت‌ها با این ورودی انجام می‌شود (تست/عادی)\n\n"
 		"<b>۸) خروجی کاربران</b>\n"
 		"<code>/export_users</code> — فایل CSV ستونی: هر ستون یک numeric_id؛ ردیف‌ها: نام کانفیگ (حجم GB)\n\n"
-		"<b>۱۰) قیمت‌گذاری صورتحساب</b>\n"
-		"<code>/set_prices full=2000 under=3000</code> — تعیین قیمت هر گیگ (تومان): full=برای ۱۰۰GB، under=برای کمتر از ۱۰۰GB\n\n"
-		"<b>۹) مشاهده تنظیمات</b>\n"
+		"<b>۹) قیمت‌گذاری و صورتحساب</b>\n"
+		"<code>/set_prices full=2000 under=3000</code> — تعیین قیمت هر گیگ (تومان): full=برای ۱۰۰GB، under=برای کمتر از ۱۰۰GB\n"
+		"<code>/invoice &lt;numeric_id&gt;</code> — مشاهده صورتحساب کاربر مشخص\n\n"
+		"<b>۱۰) مشاهده تنظیمات</b>\n"
 		"<code>/admin_settings</code> — نمایش کلیدهای تنظیمات\n"
 		"لاگ دیباگ: اجرای ربات با <code>BOT_LOG_LEVEL=DEBUG</code>\n"
 	)
@@ -1192,6 +1208,7 @@ def run() -> None:
     application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(CommandHandler('sets', sets_server_label))
     application.add_handler(CommandHandler('set_prices', set_prices))
+    application.add_handler(CommandHandler('invoice', admin_invoice))
     application.add_handler(CommandHandler('help', admin_help))
     application.add_handler(CommandHandler('export_users', export_user_stats))
     application.add_handler(CommandHandler('set_default_inbound', set_default_inbound))
