@@ -137,7 +137,7 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                     await update.message.reply_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
                 return WAIT_USERNAME
             if update.message:
-                await update.message.reply_text('حجم را بر حسب GB وارد کنید (مثلاً 10)')
+                await update.message.reply_text('حجم را بر حسب GB وارد کنید :')
             return WAIT_VOLUME_GB
         except Exception:
             pass
@@ -229,7 +229,7 @@ async def on_inbound_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
         logger.info("next_state=WAIT_USERNAME (test) user_id=%s", numeric_id_str)
         return WAIT_USERNAME
-    await query.edit_message_text('حجم را بر حسب GB وارد کنید (مثلاً 10)')
+    await query.edit_message_text('حجم را بر حسب GB وارد کنید :')
     logger.info("next_state=WAIT_VOLUME_GB user_id=%s", numeric_id_str)
     return WAIT_VOLUME_GB
 
@@ -237,10 +237,10 @@ async def on_inbound_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     raw = (update.message.text if update.message else '').strip()
     gb = _parse_float_from_text(raw)
-    if gb is None or gb <= 0:
+    if gb is None or gb <= 0 or gb > 100:
         logger.info("invalid_volume user_id=%s raw=%r", getattr(update.effective_user, 'id', None), raw)
         if update.message:
-            await update.message.reply_text('عدد نامعتبر. مقدار مثبت وارد کنید.')
+            await update.message.reply_text('عدد نامعتبر. مقدار باید > 0 و ≤ 100 باشد.')
         return WAIT_VOLUME_GB
     context.user_data['total_gb'] = gb
     # Set default expiry days and go ask username directly
