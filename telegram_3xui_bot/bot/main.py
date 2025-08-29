@@ -102,15 +102,6 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     numeric_id = update.effective_user.id
     logger.info("create_entry start user_id=%s via_text=%r", numeric_id, getattr(update.message, 'text', ''))
 
-    # If started via button 'کانفیگ تست'
-    try:
-        if update.message and (update.message.text or '').strip() == 'کانفیگ تست':
-            context.user_data['is_test'] = 1
-            context.user_data['total_gb'] = 1
-            context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
-    except Exception:
-        pass
-
     app = context.application.bot_data['appcfg']
     await register_user(numeric_id, update.effective_user.id, app.bot.per_user_limit)
     used = await count_user_configs(numeric_id)
@@ -121,6 +112,15 @@ async def create_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if update.message:
             await update.message.reply_text('شما به محدودیت ساخت رسیدید .با ادمین در ارتباط باشید\n@Driven_Under')
         return ConversationHandler.END
+
+    # If started via button 'کانفیگ تست' (only allowed if user has remaining limit)
+    try:
+        if update.message and (update.message.text or '').strip() == 'کانفیگ تست':
+            context.user_data['is_test'] = 1
+            context.user_data['total_gb'] = 1
+            context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
+    except Exception:
+        pass
 
     # If admin has set a default inbound, skip listing and use it
     try:
@@ -518,12 +518,6 @@ async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     # 'ساخت کانفیگ' و 'کانفیگ تست' هر دو به create_entry می‌روند؛ تست در create_entry تشخیص داده می‌شود
     if text in ('ساخت کانفیگ', 'کانفیگ تست'):
-        # allow only once per Telegram user for test
-        if text == 'کانفیگ تست':
-            used_tests = await count_test_configs_by_telegram_user(update.effective_user.id)
-            if used_tests >= 1:
-                await update.message.reply_text('شما قبلاً کانفیگ تست دریافت کرده‌اید.')
-                return
         await create_entry(update, context)
         return
 
@@ -728,7 +722,6 @@ async def set_prices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def _build_invoice_text(context: ContextTypes.DEFAULT_TYPE, numeric_id: int) -> str:
     rows = await get_configs_by_numeric_id(numeric_id)
-    rows = [r for r in rows if int(r.get('is_test') or 0) == 0]
     if not rows:
         return 'هیچ کانفیگی ثبت نشده است.'
     try:

@@ -67,7 +67,7 @@ async def get_user(numeric_id: int) -> Optional[Dict[str, Any]]:
 
 async def count_user_configs(numeric_id: int) -> int:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
-        async with db.execute('SELECT COUNT(*) FROM configs WHERE numeric_id = ? AND COALESCE(is_test,0)=0', (numeric_id,)) as cur:
+        async with db.execute('SELECT COUNT(*) FROM configs WHERE numeric_id = ?', (numeric_id,)) as cur:
             row = await cur.fetchone()
             return int(row[0]) if row and row[0] is not None else 0
 
