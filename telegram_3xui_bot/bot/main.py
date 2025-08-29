@@ -707,7 +707,8 @@ async def set_prices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             k, v = it.split('=', 1)
             k = k.strip().lower()
             try:
-                price = int(v)
+                v_norm = _fa2en_digits(v.strip())
+                price = int(v_norm)
                 if price < 0:
                     raise ValueError
             except Exception:
@@ -1198,6 +1199,8 @@ def run() -> None:
     application.add_handler(conv_create)
     application.add_handler(conv_list)
     application.add_handler(conv_stats)
+    # Fallback main menu router for text buttons
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_main_menu))
 
     # Global error handler to avoid noisy logs on transient network issues
     async def _on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
