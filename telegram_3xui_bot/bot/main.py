@@ -32,6 +32,7 @@ from storage.db import (
     count_user_configs,
     add_config_record,
     get_configs_by_numeric_id,
+    get_configs_by_numeric_id_since,
     set_user_limit,
     get_user,
     set_setting,
@@ -638,9 +639,15 @@ async def setlimit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     current = int(urec.get('max_configs')) if urec else 0
     new_limit = current + delta_limit
     await set_user_limit(numeric_id, new_limit)
+    # Reset invoice epoch to now
+    now = datetime.now(tz=timezone.utc).astimezone()
+    await set_setting(f'billing_epoch:{numeric_id}', now.isoformat())
     used = await count_user_configs(numeric_id)
     if update.message:
-        await update.message.reply_text(f'Limit updated for {numeric_id}: used {used}/{new_limit}.')
+        await update.message.reply_text(
+            f'لیمیت کاربر به‌روزرسانی شد: {used}/{new_limit}\n'
+            f'صورتحساب از این لحظه صفر شد و از نو محاسبه می‌شود.'
+        )
 
 
 def _fa2en_digits(text: str) -> str:
@@ -726,7 +733,11 @@ async def set_prices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def _build_invoice_text(context: ContextTypes.DEFAULT_TYPE, numeric_id: int) -> str:
-    rows = await get_configs_by_numeric_id(numeric_id)
+    since = await get_setting(f'billing_epoch:{numeric_id}')
+    if since:
+        rows = await get_configs_by_numeric_id_since(numeric_id, since)
+    else:
+        rows = await get_configs_by_numeric_id(numeric_id)
     if not rows:
         return 'هیچ کانفیگی ثبت نشده است.'
     try:

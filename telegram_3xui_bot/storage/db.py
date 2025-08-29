@@ -86,6 +86,19 @@ async def get_configs_by_numeric_id(numeric_id: int) -> List[Dict[str, Any]]:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
+async def get_configs_by_numeric_id_since(numeric_id: int, since_iso: str) -> List[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            async with db.execute('SELECT * FROM configs WHERE numeric_id = ? AND created_at >= ? ORDER BY created_at DESC', (numeric_id, since_iso)) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
+        except Exception:
+            # if created_at is not ISO comparable, fallback to all
+            async with db.execute('SELECT * FROM configs WHERE numeric_id = ? ORDER BY created_at DESC', (numeric_id,)) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
+
 async def get_latest_config_by_identifier(client_identifier: str) -> Optional[Dict[str, Any]]:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
         db.row_factory = aiosqlite.Row
