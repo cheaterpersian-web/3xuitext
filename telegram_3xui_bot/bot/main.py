@@ -625,17 +625,22 @@ async def setlimit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text('Usage: /setlimit <numeric_id> <limit>')
         return
     try:
-        numeric_id = int(parts[1])
-        limit = int(parts[2])
-        if limit <= 0:
+        numeric_id = int(_fa2en_digits(parts[1]))
+        delta_limit = int(_fa2en_digits(parts[2]))
+        if delta_limit <= 0:
             raise ValueError
     except Exception:
         if update.message:
             await update.message.reply_text('Provide valid integers for id and limit (>0).')
         return
-    await set_user_limit(numeric_id, limit)
+    # fetch current user record
+    urec = await get_user(numeric_id)
+    current = int(urec.get('max_configs')) if urec else 0
+    new_limit = current + delta_limit
+    await set_user_limit(numeric_id, new_limit)
+    used = await count_user_configs(numeric_id)
     if update.message:
-        await update.message.reply_text(f'Set limit {limit} for numeric ID {numeric_id}.')
+        await update.message.reply_text(f'Limit updated for {numeric_id}: used {used}/{new_limit}.')
 
 
 def _fa2en_digits(text: str) -> str:
