@@ -53,7 +53,7 @@ def load_app_config() -> AppConfig:
     password = os.getenv(ENV_VAR_PANEL_PASSWORD)
     insecure = os.getenv(ENV_VAR_PANEL_INSECURE, '0') in ('1', 'true', 'TRUE', 'yes', 'on')
     admin_ids_raw = os.getenv(ENV_VAR_ADMIN_IDS, '')
-    per_user_limit_raw = os.getenv(ENV_VAR_PER_USER_LIMIT, '1')
+    per_user_limit_raw = os.getenv(ENV_VAR_PER_USER_LIMIT, '0')
     subscription_base_url = os.getenv(ENV_VAR_SUBSCRIPTION_BASE_URL, '')
 
     if not token or not base_url_raw or not username or not password:

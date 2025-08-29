@@ -12,7 +12,7 @@ class PanelConfig(BaseModel):
 class BotConfig(BaseModel):
     token: str
     admin_numeric_ids: List[int] = Field(default_factory=list)
-    per_user_limit: int = 1
+    per_user_limit: int = 0
 
 class AppConfig(BaseModel):
     panel: PanelConfig
