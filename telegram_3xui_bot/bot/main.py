@@ -67,6 +67,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         kb = ReplyKeyboardMarkup(
             [[KeyboardButton('ساخت کانفیگ')],
              [KeyboardButton('استعلام سرویس')],
+             [KeyboardButton('صورتحساب')],
              [KeyboardButton('کانفیگ تست')]],
             resize_keyboard=True
         )
@@ -512,6 +513,9 @@ async def on_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if text == 'استعلام سرویس':
         await mystats_entry(update, context)
         return
+    if text == 'صورتحساب':
+        await show_invoice(update, context)
+        return
     # 'ساخت کانفیگ' و 'کانفیگ تست' هر دو به create_entry می‌روند؛ تست در create_entry تشخیص داده می‌شود
     if text in ('ساخت کانفیگ', 'کانفیگ تست'):
         # allow only once per Telegram user for test
@@ -687,6 +691,105 @@ def _is_admin(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     return user_id in admin_ids
 
 
+async def set_prices(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_admin(context, update.effective_user.id):
+        if update.message:
+            await update.message.reply_text('Unauthorized.')
+        return
+    text = (update.message.text or '')
+    items = text.split()[1:]
+    if not items:
+        await update.message.reply_text('Usage: /set_prices full=2000 under=3000')
+        return
+    vals = {}
+    for it in items:
+        if '=' in it:
+            k, v = it.split('=', 1)
+            k = k.strip().lower()
+            try:
+                price = int(v)
+                if price < 0:
+                    raise ValueError
+            except Exception:
+                await update.message.reply_text(f'Invalid price for {k}.')
+                return
+            if k in ('full', 'under'):
+                vals[k] = price
+    if 'full' not in vals and 'under' not in vals:
+        await update.message.reply_text('Specify at least one of full=.. or under=..')
+        return
+    if 'full' in vals:
+        await set_setting('price_full_100gb', str(vals['full']))
+    if 'under' in vals:
+        await set_setting('price_under_100gb', str(vals['under']))
+    await update.message.reply_text('Prices updated.')
+
+
+async def show_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    # fetch configs for this numeric_id (Telegram ID is used)
+    rows = await get_configs_by_numeric_id(user_id)
+    # Exclude test configs
+    rows = [r for r in rows if int(r.get('is_test') or 0) == 0]
+    if not rows:
+        await update.message.reply_text('هیچ کانفیگی ثبت نشده است.')
+        return
+    # Prices (defaults): full=2000, under=3000 (per GB)
+    try:
+        p_full = int((await get_setting('price_full_100gb')) or '2000')
+    except Exception:
+        p_full = 2000
+    try:
+        p_under = int((await get_setting('price_under_100gb')) or '3000')
+    except Exception:
+        p_under = 3000
+
+    def to_gb(total_bytes: int) -> float:
+        return (int(total_bytes or 0)) / (1024*1024*1024)
+
+    full_items = []
+    under_items = []
+    for r in rows:
+        gb = to_gb(r.get('total_bytes') or 0)
+        name = r.get('client_identifier') or '-'
+        if abs(gb - 100.0) < 1e-6 or gb >= 100.0:  # treat >=100 as 100-tier
+            full_items.append((name, gb))
+        else:
+            under_items.append((name, gb))
+
+    # compute totals
+    full_sum_gb = sum(g for _, g in full_items)
+    under_sum_gb = sum(g for _, g in under_items)
+    # billing policy per request:
+    # - exactly 100GB -> per-GB price p_full
+    # - below 100GB -> per-GB price p_under
+    # round up to 2 decimals for display, price uses exact GB as stored
+    full_cost = int(round(full_sum_gb * p_full))
+    under_cost = int(round(under_sum_gb * p_under))
+    total_cost = full_cost + under_cost
+
+    lines: list[str] = []
+    lines.append('صورتحساب شما:')
+    lines.append('')
+    lines.append('کانفیگ‌های ۱۰۰ گیگ:')
+    if full_items:
+        for name, g in full_items:
+            lines.append(f"- {name} — {g:.2f} GB × {p_full:,} تومان")
+    else:
+        lines.append('- موردی ندارد')
+    lines.append('')
+    lines.append('کانفیگ‌های زیر ۱۰۰ گیگ:')
+    if under_items:
+        for name, g in under_items:
+            lines.append(f"- {name} — {g:.2f} GB × {p_under:,} تومان")
+    else:
+        lines.append('- موردی ندارد')
+    lines.append('')
+    lines.append(f"مجموع حجم ۱۰۰گیگ: {full_sum_gb:.2f} GB | مبلغ: {full_cost:,} تومان")
+    lines.append(f"مجموع حجم زیر۱۰۰: {under_sum_gb:.2f} GB | مبلغ: {under_cost:,} تومان")
+    lines.append('')
+    lines.append(f"مجموع بدهی: {total_cost:,} تومان")
+    await update.message.reply_text('\n'.join(lines))
 async def admin_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(context, update.effective_user.id):
         if update.message:
@@ -948,6 +1051,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 		"<code>/set_default_inbound &lt;inbound_id&gt;</code> — همه ساخت‌ها با این ورودی انجام می‌شود (تست/عادی)\n\n"
 		"<b>۸) خروجی کاربران</b>\n"
 		"<code>/export_users</code> — فایل CSV ستونی: هر ستون یک numeric_id؛ ردیف‌ها: نام کانفیگ (حجم GB)\n\n"
+		"<b>۱۰) قیمت‌گذاری صورتحساب</b>\n"
+		"<code>/set_prices full=2000 under=3000</code> — تعیین قیمت هر گیگ (تومان): full=برای ۱۰۰GB، under=برای کمتر از ۱۰۰GB\n\n"
 		"<b>۹) مشاهده تنظیمات</b>\n"
 		"<code>/admin_settings</code> — نمایش کلیدهای تنظیمات\n"
 		"لاگ دیباگ: اجرای ربات با <code>BOT_LOG_LEVEL=DEBUG</code>\n"
@@ -1085,6 +1190,7 @@ def run() -> None:
     application.add_handler(CommandHandler('unset_inbound_port', unset_inbound_port))
     application.add_handler(CommandHandler('set_server', set_server))
     application.add_handler(CommandHandler('sets', sets_server_label))
+    application.add_handler(CommandHandler('set_prices', set_prices))
     application.add_handler(CommandHandler('help', admin_help))
     application.add_handler(CommandHandler('export_users', export_user_stats))
     application.add_handler(CommandHandler('set_default_inbound', set_default_inbound))
