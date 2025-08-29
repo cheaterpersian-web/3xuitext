@@ -226,7 +226,7 @@ async def on_inbound_selected(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info("inbound_selected user_id=%s inbound_id=%s is_test=%s", numeric_id_str, inbound_id_str, context.user_data.get('is_test'))
     # If test flow, skip volume and go to username directly
     if int(context.user_data.get('is_test', 0)) == 1:
-        await query.edit_message_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
+        await query.edit_message_text('نام کانفیگ را وارد کنید :')
         logger.info("next_state=WAIT_USERNAME (test) user_id=%s", numeric_id_str)
         return WAIT_USERNAME
     await query.edit_message_text('حجم را بر حسب GB وارد کنید :')
@@ -246,7 +246,7 @@ async def on_volume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Set default expiry days and go ask username directly
     context.user_data['expiry_days'] = DEFAULT_EXPIRY_DAYS
     if update.message:
-        await update.message.reply_text('نام کانفیگ را وارد کنید (حروف، عدد، -):')
+        await update.message.reply_text('نام کانفیگ را وارد کنید :')
     logger.info("next_state=WAIT_USERNAME user_id=%s volume_gb=%.2f", getattr(update.effective_user, 'id', None), gb)
     return WAIT_USERNAME
 
@@ -265,14 +265,15 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if not username or len(username) < 3:
         logger.info("invalid_username user_id=%s raw=%r", getattr(update.effective_user, 'id', None), raw_username)
         if update.message:
-            await update.message.reply_text('Username is too short. Send another (letters, digits, -).')
+            await update.message.reply_text('نام معتبر نیست. نام دیگری بفرستید.')
         return WAIT_USERNAME
-    # validate allowed chars: letters, digits, -
-    if not re.fullmatch(r'[A-Za-z0-9\-]+', username):
-        logger.info("username_bad_chars user_id=%s cleaned=%r", getattr(update.effective_user, 'id', None), username)
+    # sanitize to letters/digits/- only
+    sanitized = re.sub(r'[^A-Za-z0-9\-]+', '', username)
+    if not sanitized or len(sanitized) < 3:
         if update.message:
-            await update.message.reply_text('Only letters, digits, and - are allowed. Send another.')
+            await update.message.reply_text('نام معتبر نیست. نام دیگری بفرستید.')
         return WAIT_USERNAME
+    username = sanitized
     inbound_id = context.user_data.get('inbound_id')
     numeric_id = context.user_data.get('numeric_id')
     total_gb = context.user_data.get('total_gb')
@@ -289,9 +290,7 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         exists = await client.get_client_traffics(email=username)
         if isinstance(exists, dict) and (exists.get('up') is not None or exists.get('obj') is not None or exists.get('total') is not None):
             logger.info("username_duplicate user_id=%s username=%s", getattr(update.effective_user, 'id', None), username)
-            if update.message:
-                await update.message.reply_text('این نام کاربری قبلاً استفاده شده است. نام دیگری بفرستید.')
-            return WAIT_USERNAME
+            username = f"{username}-{random.randint(100,999)}"
     except Exception:
         pass
 
