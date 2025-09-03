@@ -112,11 +112,15 @@ class ThreeXUIClient:
         try:
             data = resp.json()
         except Exception:
-            snippet = (resp.text or '')[:200]
-            raise ThreeXUIError(
-                f'Unexpected non-JSON from /panel/api/inbounds/list. Check PANEL_BASE_URL (scheme/path) and credentials. '
-                f'Response snippet: {snippet}'
-            )
+            # If 200 but non-JSON, try probing to detect correct prefix/variant
+            try:
+                return await self._probe_inbounds_endpoint()
+            except ThreeXUIError:
+                snippet = (resp.text or '')[:200]
+                raise ThreeXUIError(
+                    f'Unexpected non-JSON from /panel/api/inbounds/list. Check PANEL_BASE_URL (scheme/path) and credentials. '
+                    f'Response snippet: {snippet}'
+                )
         # Some panels return {"obj": [ ... ]} or plain list
         if isinstance(data, dict) and 'obj' in data:
             return data['obj']
@@ -125,7 +129,7 @@ class ThreeXUIClient:
         return data.get('data') or []
 
     async def add_client(self, *, inbound_id: int, username: str, total_gb: float, expiry_days: int, client_uuid: Optional[str] = None, sub_id: Optional[str] = None) -> Dict[str, Any]:
-        # Restrict to the variant you provided: POST /panel/api/inbounds/addClient with form-encoded body
+        # Use detected API prefix and accept 3X-UI variants; send form-encoded body
         total_bytes = int(total_gb * 1024 * 1024 * 1024)
         # per your example: allow zero for unlimited
         expiry_ts_ms = 0 if int(expiry_days) == 0 else int((_time.time() + expiry_days * 86400) * 1000)
@@ -147,23 +151,44 @@ class ThreeXUIClient:
             'id': inbound_id,
             'settings': payload_settings,
         }
-        # Always use '/panel/api' prefix explicitly per your environment
-        url = '/panel/api/inbounds/addClient'
-        # Send as form-encoded data with Accept header
-        resp = await self._request('POST', url, data=data, headers={'Accept': 'application/json'})
-        ctype = resp.headers.get('content-type', '')
-        # Accept JSON or plain text responses
-        try:
-            parsed = resp.json()
-            if isinstance(parsed, dict) and parsed.get('success') is False:
-                raise ThreeXUIError(parsed.get('msg') or parsed.get('message') or 'success=false')
-            return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
-        except Exception:
+        # Ensure API prefix (e.g., '', '/panel', '/panel/api')
+        await self._ensure_api_prefix()
+        # Try preferred plural first, then singular route name variants
+        url_candidates = [
+            self._build_url('/inbounds/addClient'),
+            self._build_url('/inbound/addClient'),
+            # Some panels expose explicit panel/api path regardless of prefix detection
+            '/panel/api/inbounds/addClient',
+        ]
+        last_resp: Optional[httpx.Response] = None
+        last_err: Optional[str] = None
+        for url in url_candidates:
+            resp = await self._request('POST', url, data=data)
+            last_resp = resp
+            ctype = (resp.headers.get('content-type') or '').lower()
+            if resp.status_code >= 400:
+                last_err = f"{resp.status_code} {resp.text[:200]}"
+                continue
+            # Accept JSON
+            try:
+                parsed = resp.json()
+                if isinstance(parsed, dict) and parsed.get('success') is False:
+                    last_err = parsed.get('msg') or parsed.get('message') or 'success=false'
+                    # do not return; try next variant
+                    continue
+                return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+            except Exception:
+                pass
+            # Accept text/plain or empty body with 200
             text = (resp.text or '').strip()
-            if resp.status_code < 400 and text:
+            if text:
                 return {'success': True, 'raw': text, 'content_type': ctype}
-            snippet = text[:200]
-            raise ThreeXUIError(f"/panel/api/inbounds/addClient failed: {resp.status_code} {ctype} {snippet}")
+            # Empty but 2xx
+            if 200 <= resp.status_code < 300:
+                return {'success': True, 'raw': '', 'content_type': ctype}
+            last_err = f"{resp.status_code} {ctype} {text[:200]}"
+        # If we reached here, all candidates failed
+        raise ThreeXUIError(f"addClient failed: {last_err or 'unknown error'}")
 
     async def get_client_traffics(self, *, email: Optional[str] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
         params: Dict[str, Any] = {}
@@ -178,6 +203,9 @@ class ThreeXUIClient:
             candidates = [
                 self._build_url(f'/inbounds/getClientTraffics/{email}'),
                 self._build_url(f'/inbound/getClientTraffics/{email}'),
+                # Some flavors expose client traffic under client endpoint
+                self._build_url(f'/client/traffics?email={email}'),
+                '/panel/api/inbounds/getClientTraffics/' + email,
             ]
             for url in candidates:
                 resp = await self._request('GET', url)
@@ -190,6 +218,28 @@ class ThreeXUIClient:
                         return data['obj']
                     return data
                 except Exception:
+                    # Accept text/plain simple kv pairs like up/down/total if present
+                    text = (resp.text or '').strip()
+                    if text and any(k in text for k in ('up', 'down', 'total')):
+                        # naive parse: extract integers after keys
+                        try:
+                            kv: Dict[str, Any] = {}
+                            for part in text.replace(',', '\n').split('\n'):
+                                if ':' in part:
+                                    k, v = part.split(':', 1)
+                                    k = k.strip()
+                                    v = v.strip()
+                                    if v.isdigit():
+                                        kv[k] = int(v)
+                                    else:
+                                        try:
+                                            kv[k] = int(float(v))
+                                        except Exception:
+                                            kv[k] = v
+                            if kv:
+                                return kv
+                        except Exception:
+                            pass
                     # try next variant
                     continue
         else:
@@ -202,6 +252,10 @@ class ThreeXUIClient:
                         return data['obj']
                     return data
                 except Exception:
+                    # Treat 200 non-JSON as opaque success payload
+                    text = (resp.text or '').strip()
+                    if text:
+                        return {'raw': text}
                     snippet = (resp.text or '')[:200]
                     raise ThreeXUIError(f'Unexpected non-JSON from traffics endpoint. Snippet: {snippet}')
         if last_resp is None:
