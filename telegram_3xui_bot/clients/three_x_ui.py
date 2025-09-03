@@ -125,97 +125,45 @@ class ThreeXUIClient:
         return data.get('data') or []
 
     async def add_client(self, *, inbound_id: int, username: str, total_gb: float, expiry_days: int, client_uuid: Optional[str] = None, sub_id: Optional[str] = None) -> Dict[str, Any]:
-        # Try multiple endpoint/payload variants across panel flavors
+        # Restrict to the variant you provided: POST /panel/api/inbounds/addClient with form-encoded body
         total_bytes = int(total_gb * 1024 * 1024 * 1024)
-        expiry_ts_ms = int((_time.time() + expiry_days * 86400) * 1000)
-        # Variant A: inbounds/addClient with settings JSON (most common for panel/api)
-        settings_payload = {
+        # per your example: allow zero for unlimited
+        expiry_ts_ms = 0 if int(expiry_days) == 0 else int((_time.time() + expiry_days * 86400) * 1000)
+        payload_settings = __import__('json').dumps({
+            'clients': [{
+                'id': client_uuid or str(__import__('uuid').uuid4()),
+                'flow': '',
+                'email': username,
+                'limitIp': 0,
+                'totalGB': total_bytes,
+                'expiryTime': expiry_ts_ms,
+                'enable': True,
+                'tgId': '',
+                'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
+                'reset': 0,
+            }]
+        })
+        data = {
             'id': inbound_id,
-            'settings': httpx.dumps({
-                'clients': [{
-                    'id': client_uuid or str(__import__('uuid').uuid4()),
-                    'alterId': 0,
-                    'email': username,
-                    'totalGB': total_bytes,
-                    'expiryTime': expiry_ts_ms,
-                    'enable': True,
-                    'tgId': '',
-                    'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
-                    'limitIp': 0,
-                    'flow': '',
-                }]
-            }) if hasattr(httpx, 'dumps') else __import__('json').dumps({
-                'clients': [{
-                    'id': client_uuid or str(__import__('uuid').uuid4()),
-                    'alterId': 0,
-                    'email': username,
-                    'totalGB': total_bytes,
-                    'expiryTime': expiry_ts_ms,
-                    'enable': True,
-                    'tgId': '',
-                    'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
-                    'limitIp': 0,
-                    'flow': '',
-                }]
-            })
+            'settings': payload_settings,
         }
-
-        payloads = [
-            settings_payload,
-            {
-                'inboundId': inbound_id,
-                'email': username,
-                'totalGB': int(round(total_gb)),
-                'expiryTime': int(expiry_days),
-                'enable': True,
-                'limitIp': 0,
-            },
-            {
-                'inboundId': inbound_id,
-                'email': username,
-                'total': total_bytes,
-                'expireTime': expiry_ts_ms,
-                'enable': True,
-                'limitIp': 0,
-            },
-        ]
-        # Use dynamic API prefix when available; avoid hardcoding '/panel/api' here
-        paths = ['/inbounds/addClient', '/inbound/addClient', '/client/add']
-        errors: List[str] = []
-        await self._ensure_api_prefix()
-        for path in paths:
-            url = self._build_url(path)
-            for pl in payloads:
-                # Try JSON first, then form-encoded fallback
-                for mode in ('json', 'data'):
-                    kwargs = {'json': pl} if mode == 'json' else {'data': pl}
-                    resp = await self._request('POST', url, **kwargs)
-                    ctype = resp.headers.get('content-type', '')
-                    if resp.status_code >= 400:
-                        snippet = (resp.text or '')[:120]
-                        errors.append(f"{url} ({mode}) -> {resp.status_code} {ctype} {snippet}")
-                        continue
-                    # First try JSON
-                    try:
-                        data = resp.json()
-                        # Some APIs return { success, obj, msg }
-                        if isinstance(data, dict) and 'success' in data:
-                            if data.get('success'):
-                                return data
-                            else:
-                                errors.append(f"{url} ({mode}) -> success=false {str(data.get('msg') or data.get('message') or '')[:80]}")
-                                continue
-                        # If no explicit success flag, assume success if HTTP 200
-                        return data
-                    except Exception:
-                        # Accept plain-text success responses
-                        text = (resp.text or '').strip().lower()
-                        if text in ('ok', 'true', 'success') or 'success' in text:
-                            return {'success': True, 'raw': resp.text}
-                        # Not JSON and not recognizable success, continue to next variant
-                        errors.append(f"{url} ({mode}) -> not-json {ctype} {(resp.text or '')[:80]}")
-                        continue
-        raise ThreeXUIError('Failed to add client via known endpoints. Tried: ' + ', '.join(errors))
+        # Always use '/panel/api' prefix explicitly per your environment
+        url = '/panel/api/inbounds/addClient'
+        # Send as form-encoded data with Accept header
+        resp = await self._request('POST', url, data=data, headers={'Accept': 'application/json'})
+        ctype = resp.headers.get('content-type', '')
+        # Accept JSON or plain text responses
+        try:
+            parsed = resp.json()
+            if isinstance(parsed, dict) and parsed.get('success') is False:
+                raise ThreeXUIError(parsed.get('msg') or parsed.get('message') or 'success=false')
+            return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+        except Exception:
+            text = (resp.text or '').strip()
+            if resp.status_code < 400 and text:
+                return {'success': True, 'raw': text, 'content_type': ctype}
+            snippet = text[:200]
+            raise ThreeXUIError(f"/panel/api/inbounds/addClient failed: {resp.status_code} {ctype} {snippet}")
 
     async def get_client_traffics(self, *, email: Optional[str] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
         params: Dict[str, Any] = {}
