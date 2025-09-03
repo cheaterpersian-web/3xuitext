@@ -28,3 +28,10 @@ python main.py
 - `PANEL_BASE_URL`, `PANEL_USERNAME`, `PANEL_PASSWORD`, `PANEL_INSECURE`
 - `SUBSCRIPTION_BASE_URL` optional fallback
 
+Notes:
+- Set `PANEL_BASE_URL` to your panel root, including scheme. Examples:
+  - `https://panel.example.com`
+  - `https://example.com/xui` or `https://example.com/panel`
+  - You do NOT need to append `/panel/api`; the bot auto-detects the correct API prefix.
+  - If your panel uses a self-signed cert, set `PANEL_INSECURE=1`.
+

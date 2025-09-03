@@ -16,7 +16,13 @@ class ThreeXUIClient:
         self._base_url = base_url.rstrip('/')
         self._username = username
         self._password = password
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=timeout, verify=not insecure, follow_redirects=True)
+        self._client = httpx.AsyncClient(
+            base_url=self._base_url,
+            timeout=timeout,
+            verify=not insecure,
+            follow_redirects=True,
+            headers={'Accept': 'application/json, text/plain, */*'}
+        )
         self._last_login_at: float = 0.0
         self._api_prefix: str | None = None
         self._use_plural_inbounds: bool | None = None
@@ -55,6 +61,14 @@ class ThreeXUIClient:
     def _build_url(self, path: str) -> str:
         prefix = self._api_prefix or ''
         return f"{prefix}{path}"
+
+    async def _ensure_api_prefix(self) -> None:
+        if self._api_prefix is None:
+            try:
+                await self._probe_inbounds_endpoint()
+            except ThreeXUIError:
+                # Leave prefix unset; direct paths may still work
+                pass
 
     async def _probe_inbounds_endpoint(self) -> list[dict[str, any]]:
         prefixes = ['', '/xui', '/panel', '/api', '/xui/api', '/panel/api']
@@ -123,7 +137,7 @@ class ThreeXUIClient:
                     'alterId': 0,
                     'email': username,
                     'totalGB': total_bytes,
-                    'expiryTime': -2592000000,
+                    'expiryTime': expiry_ts_ms,
                     'enable': True,
                     'tgId': '',
                     'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
@@ -136,7 +150,7 @@ class ThreeXUIClient:
                     'alterId': 0,
                     'email': username,
                     'totalGB': total_bytes,
-                    'expiryTime': -2592000000,
+                    'expiryTime': expiry_ts_ms,
                     'enable': True,
                     'tgId': '',
                     'subId': sub_id or ''.join(__import__('random').choices('abcdefghijklmnopqrstuvwxyz0123456789', k=16)),
@@ -165,31 +179,42 @@ class ThreeXUIClient:
                 'limitIp': 0,
             },
         ]
-        # Prioritize the exact path used in your working script
-        paths = ['/panel/api/inbounds/addClient', '/inbounds/addClient', '/inbound/addClient', '/client/add']
+        # Use dynamic API prefix when available; avoid hardcoding '/panel/api' here
+        paths = ['/inbounds/addClient', '/inbound/addClient', '/client/add']
         errors: List[str] = []
+        await self._ensure_api_prefix()
         for path in paths:
             url = self._build_url(path)
             for pl in payloads:
-                resp = await self._request('POST', url, json=pl)
-                if resp.status_code >= 400:
-                    errors.append(f"{url} -> {resp.status_code}")
-                    continue
-                try:
-                    data = resp.json()
-                except Exception:
-                    # Not JSON, treat as failure and continue
-                    errors.append(f"{url} -> not-json")
-                    continue
-                # Some APIs return { success, obj, msg }
-                if isinstance(data, dict) and 'success' in data:
-                    if data.get('success'):
-                        return data
-                    else:
-                        errors.append(f"{url} -> success=false {str(data.get('msg') or data.get('message') or '')[:80]}")
+                # Try JSON first, then form-encoded fallback
+                for mode in ('json', 'data'):
+                    kwargs = {'json': pl} if mode == 'json' else {'data': pl}
+                    resp = await self._request('POST', url, **kwargs)
+                    ctype = resp.headers.get('content-type', '')
+                    if resp.status_code >= 400:
+                        snippet = (resp.text or '')[:120]
+                        errors.append(f"{url} ({mode}) -> {resp.status_code} {ctype} {snippet}")
                         continue
-                # If no explicit success flag, assume success if HTTP 200
-                return data
+                    # First try JSON
+                    try:
+                        data = resp.json()
+                        # Some APIs return { success, obj, msg }
+                        if isinstance(data, dict) and 'success' in data:
+                            if data.get('success'):
+                                return data
+                            else:
+                                errors.append(f"{url} ({mode}) -> success=false {str(data.get('msg') or data.get('message') or '')[:80]}")
+                                continue
+                        # If no explicit success flag, assume success if HTTP 200
+                        return data
+                    except Exception:
+                        # Accept plain-text success responses
+                        text = (resp.text or '').strip().lower()
+                        if text in ('ok', 'true', 'success') or 'success' in text:
+                            return {'success': True, 'raw': resp.text}
+                        # Not JSON and not recognizable success, continue to next variant
+                        errors.append(f"{url} ({mode}) -> not-json {ctype} {(resp.text or '')[:80]}")
+                        continue
         raise ThreeXUIError('Failed to add client via known endpoints. Tried: ' + ', '.join(errors))
 
     async def get_client_traffics(self, *, email: Optional[str] = None, client_id: Optional[str] = None) -> Dict[str, Any]:
@@ -198,15 +223,43 @@ class ThreeXUIClient:
             params['email'] = email
         if client_id:
             params['id'] = client_id
-        # Try documented path first
+        # Prefer dynamic API prefix and both inbound(s) variants
+        await self._ensure_api_prefix()
+        last_resp: Optional[httpx.Response] = None
         if email:
-            resp = await self._request('GET', self._build_url(f'/panel/api/inbounds/getClientTraffics/{email}'))
+            candidates = [
+                self._build_url(f'/inbounds/getClientTraffics/{email}'),
+                self._build_url(f'/inbound/getClientTraffics/{email}'),
+            ]
+            for url in candidates:
+                resp = await self._request('GET', url)
+                last_resp = resp
+                if resp.status_code >= 400:
+                    continue
+                try:
+                    data = resp.json()
+                    if isinstance(data, dict) and 'obj' in data:
+                        return data['obj']
+                    return data
+                except Exception:
+                    # try next variant
+                    continue
         else:
             resp = await self._request('GET', self._build_url('/client/traffics'), params=params)
-            if resp.status_code >= 400:
-                if email:
-                    alt_url = self._build_url(f'/inbounds/getClientTraffics/{email}')
-                    resp = await self._request('GET', alt_url)
+            last_resp = resp
+            if resp.status_code < 400:
+                try:
+                    data = resp.json()
+                    if isinstance(data, dict) and 'obj' in data:
+                        return data['obj']
+                    return data
+                except Exception:
+                    snippet = (resp.text or '')[:200]
+                    raise ThreeXUIError(f'Unexpected non-JSON from traffics endpoint. Snippet: {snippet}')
+        if last_resp is None:
+            raise ThreeXUIError('Failed to get client traffics: no response')
+        snippet = (last_resp.text or '')[:200]
+        raise ThreeXUIError(f'Failed to get client traffics: {last_resp.status_code} {snippet}')
         try:
             data = resp.json()
         except Exception:
