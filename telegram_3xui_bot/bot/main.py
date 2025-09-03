@@ -384,6 +384,11 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         v_hdr = os.getenv('VLESS_HEADER_TYPE', 'http')
         v_sec = os.getenv('VLESS_SECURITY', 'none')
         suffix = os.getenv('CONFIG_REMARK_SUFFIX', '')
+        # Remove EU flag from suffix if present
+        try:
+            suffix = suffix.replace('🇪🇺', '')
+        except Exception:
+            pass
         remark = _up.quote(username + suffix)
         q = {
             'type': v_type,
@@ -419,6 +424,11 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     # server label (do not show host fallback)
     flag = (await get_setting('CONFIG_SERVER_FLAG')) or os.getenv('CONFIG_SERVER_FLAG', '')
+    # Remove EU flag if present
+    try:
+        flag = flag.replace('🇪🇺', '')
+    except Exception:
+        pass
     sname = (await get_setting('CONFIG_SERVER_NAME')) or os.getenv('CONFIG_SERVER_NAME', '')
     server_line = f"\n📡 {flag} سرور کانفیگ : {sname}".rstrip() if (flag or sname) else ''
 
