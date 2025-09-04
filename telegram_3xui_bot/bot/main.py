@@ -637,25 +637,29 @@ async def setlimit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     try:
         numeric_id = int(_fa2en_digits(parts[1]))
-        delta_limit = int(_fa2en_digits(parts[2]))
-        if delta_limit <= 0:
-            raise ValueError
+        raw_limit = _fa2en_digits(parts[2]).strip()
+        # Support absolute (e.g., 0, 10) and delta forms (+2, -1)
+        is_delta = raw_limit.startswith(('+', '-'))
+        val = int(raw_limit)
     except Exception:
         if update.message:
-            await update.message.reply_text('Provide valid integers for id and limit (>0).')
+            await update.message.reply_text('Provide a valid <numeric_id> and <limit>. Examples: 0, 10, +2, -1')
         return
     # fetch current user record
     urec = await get_user(numeric_id)
     current = int(urec.get('max_configs')) if urec else 0
-    new_limit = current + delta_limit
+    new_limit = (current + val) if is_delta else val
+    if new_limit < 0:
+        new_limit = 0
     await set_user_limit(numeric_id, new_limit)
-    # Reset invoice epoch to now
-    now = datetime.now(tz=timezone.utc).astimezone()
-    await set_setting(f'billing_epoch:{numeric_id}', now.isoformat())
+    # Reset invoice epoch to now (store in UTC SQLite-friendly format)
+    now_utc_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    await set_setting(f'billing_epoch:{numeric_id}', now_utc_str)
     used = await count_user_configs(numeric_id)
     if update.message:
+        note = '' if new_limit > 0 else ' (غیرفعال: اجازه ساخت ندارد)'
         await update.message.reply_text(
-            f'لیمیت کاربر به‌روزرسانی شد: {used}/{new_limit}\n'
+            f'لیمیت کاربر به‌روزرسانی شد: {used}/{new_limit}{note}\n'
             f'صورتحساب از این لحظه صفر شد و از نو محاسبه می‌شود.'
         )
 
@@ -1063,8 +1067,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 	text = (
 		"<b>راهنمای دستورات مدیریت ربات</b>\n\n"
 		"<b>۱) محدودیت ساخت کانفیگ</b>\n"
-		"<code>/setlimit &lt;numeric_id&gt; &lt;limit&gt;</code>\n"
-		"مثال: <code>/setlimit 6839887159 10</code>\n\n"
+		"<code>/setlimit &lt;numeric_id&gt; &lt;limit&gt;</code> — مقدار مطلق یا دلتا\n"
+		"مثال: <code>/setlimit 6839887159 0</code> (مسدودی ساخت)، <code>/setlimit 6839887159 10</code>، <code>/setlimit 6839887159 +2</code>\n\n"
 		"<b>۲) تنظیمات پیش‌فرض مدت اعتبار</b>\n"
 		"<code>/set_default_expiry &lt;days&gt;</code> — پیش‌فرض روزهای اعتبار ساخت\n"
 		"مثال: <code>/set_default_expiry 30</code>\n\n"
