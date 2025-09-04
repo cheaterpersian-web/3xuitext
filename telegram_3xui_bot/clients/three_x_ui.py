@@ -26,6 +26,7 @@ class ThreeXUIClient:
         self._last_login_at: float = 0.0
         self._api_prefix: str | None = None
         self._use_plural_inbounds: bool | None = None
+        self._add_client_path_cache: Optional[str] = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -71,7 +72,8 @@ class ThreeXUIClient:
                 pass
 
     async def _probe_inbounds_endpoint(self) -> list[dict[str, any]]:
-        prefixes = ['', '/xui', '/panel', '/api', '/xui/api', '/panel/api']
+        # Prefer the common working prefix first to minimize retries
+        prefixes = ['/panel/api', '/panel', '/api', '/xui/api', '/xui', '']
         tried: list[str] = []
         for prefix in prefixes:
             for use_plural in (True, False):
@@ -154,44 +156,19 @@ class ThreeXUIClient:
         }
         # Ensure API prefix (e.g., '', '/panel', '/panel/api')
         await self._ensure_api_prefix()
-        # Try preferred plural first, then singular route name variants
-        url_candidates = [
-            self._build_url('/inbounds/addClient'),
-            self._build_url('/inbound/addClient'),
-            self._build_url('/client/add'),
-            # Some panels expose explicit panel/api path regardless of prefix detection
-            '/panel/api/inbounds/addClient',
-            '/panel/api/client/add',
-            '/xui/inbounds/addClient',
-            '/xui/inbound/addClient',
-        ]
+        # Minimize attempts: prefer cached working path, else choose by detected plural/singular
+        url_candidates: List[str] = []
+        if self._add_client_path_cache:
+            url_candidates.append(self._add_client_path_cache)
+        else:
+            prefer_plural = True if self._use_plural_inbounds is not False else False
+            first = self._build_url('/inbounds/addClient' if prefer_plural else '/inbound/addClient')
+            url_candidates.append(first)
+            # Fallback to client/add only if the first fails
+            url_candidates.append(self._build_url('/client/add'))
+
         last_resp: Optional[httpx.Response] = None
         last_err: Optional[str] = None
-        async def _verify_created() -> bool:
-            try:
-                info = await self.get_client_traffics(email=username)
-                if isinstance(info, dict) and (info or 'obj' in info):
-                    return True
-            except Exception:
-                pass
-            try:
-                inbound = await self.get_inbound(inbound_id=inbound_id)
-                inb = inbound.get('obj') if isinstance(inbound, dict) and 'obj' in inbound else inbound
-                settings_raw = (inb or {}).get('settings') if isinstance(inb, dict) else None
-                if isinstance(settings_raw, str) and settings_raw.strip():
-                    try:
-                        settings = json.loads(settings_raw)
-                        for cli in settings.get('clients') or []:
-                            try:
-                                if (cli.get('email') or '').strip() == username:
-                                    return True
-                            except Exception:
-                                continue
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            return False
 
         for url in url_candidates:
             resp = await self._request('POST', url, data=data)
@@ -207,16 +184,16 @@ class ThreeXUIClient:
                     last_err = parsed.get('msg') or parsed.get('message') or 'success=false'
                     # do not return; try next variant
                     continue
-                # verify actually created on panel
-                if await _verify_created():
-                    return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+                # Cache working path for speed
+                self._add_client_path_cache = url
+                return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
             except Exception:
                 pass
             # Accept text/plain or empty body with 200
             text = (resp.text or '').strip()
             if 200 <= resp.status_code < 300:
-                if await _verify_created():
-                    return {'success': True, 'raw': text, 'content_type': ctype}
+                self._add_client_path_cache = url
+                return {'success': True, 'raw': text, 'content_type': ctype}
             last_err = f"{resp.status_code} {ctype} {text[:200]}"
             # Try JSON body variant as some panels expect JSON
             resp = await self._request('POST', url, json=data)
@@ -230,14 +207,14 @@ class ThreeXUIClient:
                 if isinstance(parsed, dict) and parsed.get('success') is False:
                     last_err = parsed.get('msg') or parsed.get('message') or 'success=false'
                 else:
-                    if await _verify_created():
-                        return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+                    self._add_client_path_cache = url
+                    return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
             except Exception:
                 pass
             text = (resp.text or '').strip()
             if 200 <= resp.status_code < 300:
-                if await _verify_created():
-                    return {'success': True, 'raw': text, 'content_type': ctype}
+                self._add_client_path_cache = url
+                return {'success': True, 'raw': text, 'content_type': ctype}
             last_err = f"{resp.status_code} {ctype} {text[:200]}"
         # If we reached here, all candidates failed
         raise ThreeXUIError(f"addClient failed: {last_err or 'unknown error'}")
