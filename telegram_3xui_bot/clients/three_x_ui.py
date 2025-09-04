@@ -149,6 +149,7 @@ class ThreeXUIClient:
         })
         data = {
             'id': inbound_id,
+            'inboundId': inbound_id,
             'settings': payload_settings,
         }
         # Ensure API prefix (e.g., '', '/panel', '/panel/api')
@@ -157,11 +158,41 @@ class ThreeXUIClient:
         url_candidates = [
             self._build_url('/inbounds/addClient'),
             self._build_url('/inbound/addClient'),
+            self._build_url('/client/add'),
             # Some panels expose explicit panel/api path regardless of prefix detection
             '/panel/api/inbounds/addClient',
+            '/panel/api/client/add',
+            '/xui/inbounds/addClient',
+            '/xui/inbound/addClient',
         ]
         last_resp: Optional[httpx.Response] = None
         last_err: Optional[str] = None
+        async def _verify_created() -> bool:
+            try:
+                info = await self.get_client_traffics(email=username)
+                if isinstance(info, dict) and (info or 'obj' in info):
+                    return True
+            except Exception:
+                pass
+            try:
+                inbound = await self.get_inbound(inbound_id=inbound_id)
+                inb = inbound.get('obj') if isinstance(inbound, dict) and 'obj' in inbound else inbound
+                settings_raw = (inb or {}).get('settings') if isinstance(inb, dict) else None
+                if isinstance(settings_raw, str) and settings_raw.strip():
+                    try:
+                        settings = json.loads(settings_raw)
+                        for cli in settings.get('clients') or []:
+                            try:
+                                if (cli.get('email') or '').strip() == username:
+                                    return True
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return False
+
         for url in url_candidates:
             resp = await self._request('POST', url, data=data)
             last_resp = resp
@@ -176,16 +207,37 @@ class ThreeXUIClient:
                     last_err = parsed.get('msg') or parsed.get('message') or 'success=false'
                     # do not return; try next variant
                     continue
-                return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+                # verify actually created on panel
+                if await _verify_created():
+                    return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
             except Exception:
                 pass
             # Accept text/plain or empty body with 200
             text = (resp.text or '').strip()
-            if text:
-                return {'success': True, 'raw': text, 'content_type': ctype}
-            # Empty but 2xx
             if 200 <= resp.status_code < 300:
-                return {'success': True, 'raw': '', 'content_type': ctype}
+                if await _verify_created():
+                    return {'success': True, 'raw': text, 'content_type': ctype}
+            last_err = f"{resp.status_code} {ctype} {text[:200]}"
+            # Try JSON body variant as some panels expect JSON
+            resp = await self._request('POST', url, json=data)
+            last_resp = resp
+            ctype = (resp.headers.get('content-type') or '').lower()
+            if resp.status_code >= 400:
+                last_err = f"{resp.status_code} {resp.text[:200]}"
+                continue
+            try:
+                parsed = resp.json()
+                if isinstance(parsed, dict) and parsed.get('success') is False:
+                    last_err = parsed.get('msg') or parsed.get('message') or 'success=false'
+                else:
+                    if await _verify_created():
+                        return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+            except Exception:
+                pass
+            text = (resp.text or '').strip()
+            if 200 <= resp.status_code < 300:
+                if await _verify_created():
+                    return {'success': True, 'raw': text, 'content_type': ctype}
             last_err = f"{resp.status_code} {ctype} {text[:200]}"
         # If we reached here, all candidates failed
         raise ThreeXUIError(f"addClient failed: {last_err or 'unknown error'}")
