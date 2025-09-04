@@ -55,6 +55,8 @@ async def register_user(numeric_id: int, telegram_user_id: int, default_limit: i
 
 async def set_user_limit(numeric_id: int, max_configs: int) -> None:
     async with aiosqlite.connect(DB_PATH.as_posix()) as db:
+        # Ensure user row exists; if not, insert with this limit
+        await db.execute('INSERT OR IGNORE INTO users (numeric_id, telegram_user_id, max_configs) VALUES (?, COALESCE((SELECT telegram_user_id FROM users WHERE numeric_id = ?), 0), ?)', (numeric_id, numeric_id, max_configs))
         await db.execute('UPDATE users SET max_configs = ? WHERE numeric_id = ?', (max_configs, numeric_id))
         await db.commit()
 
