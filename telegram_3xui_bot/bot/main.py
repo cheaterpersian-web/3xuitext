@@ -649,9 +649,9 @@ async def setlimit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     current = int(urec.get('max_configs')) if urec else 0
     new_limit = current + delta_limit
     await set_user_limit(numeric_id, new_limit)
-    # Reset invoice epoch to now
-    now = datetime.now(tz=timezone.utc).astimezone()
-    await set_setting(f'billing_epoch:{numeric_id}', now.isoformat())
+    # Reset invoice epoch to now (store in UTC SQLite-friendly format)
+    now_utc_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+    await set_setting(f'billing_epoch:{numeric_id}', now_utc_str)
     used = await count_user_configs(numeric_id)
     if update.message:
         await update.message.reply_text(
