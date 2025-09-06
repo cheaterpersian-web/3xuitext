@@ -31,10 +31,10 @@ class ThreeXUIClient:
         self._add_client_path_cache: Optional[str] = None
         # Refresh session proactively before common 24h expiry (default ~20h)
         try:
-            max_age_hours = float(os.getenv('PANEL_SESSION_MAX_AGE_HOURS', '20'))
+            max_age_hours = float(os.getenv('PANEL_SESSION_MAX_AGE_HOURS', '10'))
             self._session_max_age_seconds: float = max(60.0, max_age_hours * 3600.0)
         except Exception:
-            self._session_max_age_seconds = 20 * 3600.0
+            self._session_max_age_seconds = 10 * 3600.0
 
     async def aclose(self) -> None:
         await self._client.aclose()

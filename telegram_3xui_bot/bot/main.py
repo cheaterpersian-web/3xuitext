@@ -470,7 +470,7 @@ async def on_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             "📱 و در گوشی های آیفون از برنامه های :\n\n"
             "- <a href='https://apps.apple.com/app/v2box-shadowsocks-v2ray/id6446814690'>V2Box</a>\n"
             "- <a href='https://apps.apple.com/app/napsternetv/id1629465476'>NpV Tunnel</a>\n\n"
-            "و برای استفاده در ویندوز از <a href='https://www.google.com/search?q=v2rayn+download'>V2rayN</a> 💻 استفاده کنید."
+            "و برای استفاده در ویندوز از <a href='https://s19.picofile.com/file/8438583392/v2rayN_Core_1_.zip.html'>V2rayN</a> 💻 استفاده کنید."
         )
         try:
             await update.message.reply_text(instruction_html, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
