@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 import json
 import time as _time
+import os
+import re
 
 class ThreeXUIError(Exception):
     pass
@@ -27,6 +29,12 @@ class ThreeXUIClient:
         self._api_prefix: str | None = None
         self._use_plural_inbounds: bool | None = None
         self._add_client_path_cache: Optional[str] = None
+        # Refresh session proactively before common 24h expiry (default ~20h)
+        try:
+            max_age_hours = float(os.getenv('PANEL_SESSION_MAX_AGE_HOURS', '20'))
+            self._session_max_age_seconds: float = max(60.0, max_age_hours * 3600.0)
+        except Exception:
+            self._session_max_age_seconds = 20 * 3600.0
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -49,15 +57,50 @@ class ThreeXUIClient:
         self._last_login_at = time.time()
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        # Ensure we have logged in at least once
-        if self._last_login_at == 0.0:
+        # Ensure we have logged in at least once and refresh if stale
+        now_ts = time.time()
+        if self._last_login_at == 0.0 or (now_ts - self._last_login_at) > self._session_max_age_seconds:
             await self.login()
         resp = await self._client.request(method, url, **kwargs)
-        if resp.status_code == 401:
-            # try re-login once
+        # If unauthorized or got login HTML, try re-login once
+        if resp.status_code in (401, 403) or self._looks_like_login_html(resp):
             await self.login()
             resp = await self._client.request(method, url, **kwargs)
         return resp
+
+    def _looks_like_login_html(self, resp: httpx.Response) -> bool:
+        try:
+            ctype = (resp.headers.get('content-type') or '').lower()
+        except Exception:
+            ctype = ''
+        try:
+            text = (resp.text or '')
+        except Exception:
+            text = ''
+        snippet = text[:4096].lower()
+        if ('text/html' in ctype) or ('<html' in snippet) or ('<!doctype html' in snippet):
+            markers = (
+                'name="username"',
+                "name='username'",
+                'name="password"',
+                "name='password'",
+                '/login',
+                'login',
+                'sign in',
+                'signin',
+                'ورود',
+            )
+            # consider it a login page only if typical login markers exist
+            if any(m in snippet for m in markers):
+                return True
+        return False
+
+    @staticmethod
+    def _looks_like_config_text(text: str) -> bool:
+        if not text:
+            return False
+        lower = text.lower()
+        return any(proto in lower for proto in ('vless://', 'vmess://', 'trojan://', 'ss://', 'hysteria', 'sing-box'))
 
     def _build_url(self, path: str) -> str:
         prefix = self._api_prefix or ''
@@ -184,16 +227,22 @@ class ThreeXUIClient:
                     last_err = parsed.get('msg') or parsed.get('message') or 'success=false'
                     # do not return; try next variant
                     continue
-                # Cache working path for speed
-                self._add_client_path_cache = url
-                return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+                # If JSON indicates success or contains known config keys, accept
+                if isinstance(parsed, dict):
+                    if parsed.get('success') is True or any(k in parsed for k in ('vmess', 'vless', 'trojan', 'ss', 'configs', 'id', 'clientId')):
+                        self._add_client_path_cache = url
+                        return parsed
+                if isinstance(parsed, list):
+                    self._add_client_path_cache = url
+                    return parsed
             except Exception:
                 pass
-            # Accept text/plain or empty body with 200
+            # Accept text/plain or body with 200 only if it looks like configs, not login HTML
             text = (resp.text or '').strip()
             if 200 <= resp.status_code < 300:
-                self._add_client_path_cache = url
-                return {'success': True, 'raw': text, 'content_type': ctype}
+                if not self._looks_like_login_html(resp) and self._looks_like_config_text(text):
+                    self._add_client_path_cache = url
+                    return {'success': True, 'raw': text, 'content_type': ctype}
             last_err = f"{resp.status_code} {ctype} {text[:200]}"
             # Try JSON body variant as some panels expect JSON
             resp = await self._request('POST', url, json=data)
@@ -207,14 +256,21 @@ class ThreeXUIClient:
                 if isinstance(parsed, dict) and parsed.get('success') is False:
                     last_err = parsed.get('msg') or parsed.get('message') or 'success=false'
                 else:
-                    self._add_client_path_cache = url
-                    return parsed if isinstance(parsed, (dict, list)) else {'success': True, 'raw': resp.text}
+                    # Only accept if JSON is plausible success
+                    if isinstance(parsed, dict):
+                        if parsed.get('success') is True or any(k in parsed for k in ('vmess', 'vless', 'trojan', 'ss', 'configs', 'id', 'clientId')):
+                            self._add_client_path_cache = url
+                            return parsed
+                    elif isinstance(parsed, list):
+                        self._add_client_path_cache = url
+                        return parsed
             except Exception:
                 pass
             text = (resp.text or '').strip()
             if 200 <= resp.status_code < 300:
-                self._add_client_path_cache = url
-                return {'success': True, 'raw': text, 'content_type': ctype}
+                if not self._looks_like_login_html(resp) and self._looks_like_config_text(text):
+                    self._add_client_path_cache = url
+                    return {'success': True, 'raw': text, 'content_type': ctype}
             last_err = f"{resp.status_code} {ctype} {text[:200]}"
         # If we reached here, all candidates failed
         raise ThreeXUIError(f"addClient failed: {last_err or 'unknown error'}")
